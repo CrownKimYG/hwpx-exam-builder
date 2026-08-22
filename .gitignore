@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Build and coverage
+build/
+dist/
+*.egg-info/
+.coverage
+htmlcov/
+
+# HWP/HWPX documents and private question-bank data
+*.hwp
+*.hwpx
+data/
+samples/private/
+
+# Local secrets
+.env
+.env.*
+!.env.example
