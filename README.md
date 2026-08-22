@@ -21,6 +21,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## 로컬 실행
+
+```bash
+streamlit run app/main.py
+```
+
+명령을 실행하면 기본 브라우저에서 로컬 개발 화면이 열립니다.
+
 `python-hwpx`는 저장소에 소스를 복사하지 않고 Python 의존성으로 사용합니다.
 
 ## 민감 자료
