@@ -1,145 +1,129 @@
+import initRhwp, { HwpDocument } from "@rhwp/core";
+import rhwpWasmUrl from "@rhwp/core/rhwp_bg.wasm?url";
 import "./styles.css";
-import { equationScript, parseHwpx } from "./parser.js";
-import { renderEquation } from "./math.js";
+import { parseHwpx, prepareHwpxForPreview } from "./parser.js";
 
 const elements = {
   file: document.querySelector("#hwpx-file"),
   status: document.querySelector("#status"),
   workspace: document.querySelector("#workspace"),
-  select: document.querySelector("#question-select"),
   total: document.querySelector("#metric-total"),
   multiple: document.querySelector("#metric-multiple"),
   short: document.querySelector("#metric-short"),
-  warning: document.querySelector("#metric-warning"),
-  kind: document.querySelector("#question-kind"),
-  label: document.querySelector("#question-label"),
-  answer: document.querySelector("#answer-pill"),
-  content: document.querySelector("#question-content"),
-  choices: document.querySelector("#choice-list"),
-  explanation: document.querySelector("#explanation-content"),
-  warnings: document.querySelector("#warning-list"),
-  renderedPanel: document.querySelector("#panel-rendered"),
-  codePanel: document.querySelector("#panel-code"),
-  codeTitle: document.querySelector("#code-title"),
-  code: document.querySelector("#xml-code"),
-  copy: document.querySelector("#copy-xml"),
+  pages: document.querySelector("#metric-pages"),
+  previous: document.querySelector("#previous-page"),
+  next: document.querySelector("#next-page"),
+  pageLabel: document.querySelector("#page-label"),
+  pageStage: document.querySelector("#page-stage"),
+  pageCanvas: document.querySelector("#page-canvas"),
+  pageLoading: document.querySelector("#page-loading"),
 };
 
-let result = null;
-let activeTab = "rendered";
+let measureContext = null;
+let lastMeasuredFont = "";
+globalThis.measureTextWidth = (font, text) => {
+  if (!measureContext) measureContext = document.createElement("canvas").getContext("2d");
+  if (font !== lastMeasuredFont) {
+    measureContext.font = font;
+    lastMeasuredFont = font;
+  }
+  return measureContext.measureText(text).width;
+};
 
-function renderRich(nodes, target) {
-  target.replaceChildren();
-  nodes.forEach((root) => {
-    const paragraph = document.createElement("p");
-    function visit(node) {
-      if (node.nodeType !== Node.ELEMENT_NODE) return;
-      const name = node.localName;
-      if (name === "endNote") return;
-      if (name === "t") {
-        const text = node.textContent || "";
-        if (text.trim().toLowerCase() !== "zb") paragraph.append(document.createTextNode(text));
-        return;
+const rhwpReady = initRhwp({ module_or_path: rhwpWasmUrl });
+let documentViewer = null;
+let currentPage = 0;
+let pageCount = 0;
+
+function setStatus(message, state = "") {
+  elements.status.className = `status ${state}`.trim();
+  elements.status.textContent = message;
+}
+
+function safeSvg(svgSource, pageNumber) {
+  const parsed = new DOMParser().parseFromString(svgSource, "image/svg+xml");
+  if (parsed.querySelector("parsererror")) throw new Error(`${pageNumber}페이지 SVG를 읽지 못했습니다.`);
+
+  parsed.querySelectorAll("script, foreignObject, iframe, object, embed").forEach((node) => node.remove());
+  parsed.querySelectorAll("*").forEach((node) => {
+    Array.from(node.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (name.startsWith("on")) node.removeAttribute(attribute.name);
+      if ((name === "href" || name.endsWith(":href")) && !value.startsWith("data:") && !value.startsWith("#")) {
+        node.removeAttribute(attribute.name);
       }
-      if (name === "equation") {
-        const math = document.createElement("span");
-        if (renderEquation(equationScript(node), math)) paragraph.append(math);
-        return;
-      }
-      if (name === "lineBreak") paragraph.append(document.createElement("br"));
-      Array.from(node.children).forEach(visit);
-    }
-    visit(root);
-    if (paragraph.textContent.trim() || paragraph.querySelector(".math-expression")) target.append(paragraph);
+    });
   });
+
+  const root = parsed.documentElement;
+  root.setAttribute("role", "img");
+  root.setAttribute("aria-label", `HWPX 원본 ${pageNumber}페이지`);
+  root.removeAttribute("width");
+  root.removeAttribute("height");
+  return document.importNode(root, true);
 }
 
-function currentQuestion() {
-  return result?.questions[Number(elements.select.value) || 0];
-}
-
-function renderQuestion() {
-  const question = currentQuestion();
-  if (!question) return;
-  elements.kind.textContent = question.answerType === "multiple_choice" ? "5지선다형" : "단답식";
-  elements.label.textContent = `${String(question.ordinal).padStart(2, "0")}. ${question.sourceLabel}`;
-  elements.answer.textContent = `정답 ${question.answer ?? "확인 필요"}`;
-  renderRich(question.questionElements, elements.content);
-  elements.choices.replaceChildren();
-  question.choices.forEach((fragments) => {
-    const item = document.createElement("li");
-    renderRich(fragments, item);
-    elements.choices.append(item);
-  });
-  renderRich(question.explanationElements, elements.explanation);
-  elements.warnings.replaceChildren();
-  question.warnings.forEach((warning) => {
-    const item = document.createElement("p");
-    item.textContent = warning;
-    elements.warnings.append(item);
-  });
-  renderActiveTab();
-}
-
-function renderActiveTab() {
-  const question = currentQuestion();
-  const isRendered = activeTab === "rendered";
-  elements.renderedPanel.classList.toggle("hidden", !isRendered);
-  elements.codePanel.classList.toggle("hidden", isRendered);
-  document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === activeTab));
-  if (isRendered || !question) return;
-  const map = {
-    body: ["문제 영역 XML", question.bodyXml],
-    answer: ["정답 미주 XML", question.answerXml],
-    explanation: ["해설 미주 XML", question.explanationXml],
-    full: ["전체 QuestionBlock XML", question.fullXml],
-  };
-  const [title, xml] = map[activeTab];
-  elements.codeTitle.textContent = title;
-  elements.code.textContent = xml;
+function renderPage(pageIndex) {
+  if (!documentViewer || pageIndex < 0 || pageIndex >= pageCount) return;
+  elements.pageLoading.classList.remove("hidden");
+  elements.pageCanvas.classList.add("hidden");
+  try {
+    const svg = documentViewer.renderPageSvg(pageIndex);
+    elements.pageCanvas.replaceChildren(safeSvg(svg, pageIndex + 1));
+    currentPage = pageIndex;
+    elements.pageLabel.textContent = `${currentPage + 1} / ${pageCount}`;
+    elements.previous.disabled = currentPage === 0;
+    elements.next.disabled = currentPage === pageCount - 1;
+    elements.pageStage.scrollTo({ top: 0, behavior: "instant" });
+    elements.pageCanvas.classList.remove("hidden");
+  } catch (error) {
+    elements.pageCanvas.replaceChildren();
+    setStatus(`페이지 표시 실패: ${error.message}`, "error");
+  } finally {
+    elements.pageLoading.classList.add("hidden");
+  }
 }
 
 elements.file.addEventListener("change", async (event) => {
   const [file] = event.target.files;
   if (!file) return;
-  elements.status.className = "status loading";
-  elements.status.textContent = "HWPX의 문항 영역과 미주를 분석하는 중입니다...";
+  setStatus("HWPX 문항을 분석하고 원본 페이지를 구성하는 중입니다...", "loading");
   elements.workspace.classList.add("hidden");
+  elements.pageCanvas.replaceChildren();
+
   try {
-    result = await parseHwpx(file);
-    const multiple = result.questions.filter((q) => q.answerType === "multiple_choice").length;
-    const short = result.questions.filter((q) => q.answerType === "short_answer").length;
-    const warning = result.questions.reduce((sum, q) => sum + q.warnings.length, 0);
-    elements.total.textContent = result.questions.length;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const [analysis, previewBytes] = await Promise.all([
+      parseHwpx(file),
+      prepareHwpxForPreview(bytes),
+      rhwpReady,
+    ]);
+    documentViewer?.free?.();
+    documentViewer = new HwpDocument(previewBytes);
+    pageCount = documentViewer.pageCount();
+    if (!pageCount) throw new Error("렌더링할 페이지를 찾지 못했습니다.");
+
+    const multiple = analysis.questions.filter((question) => question.answerType === "multiple_choice").length;
+    const short = analysis.questions.filter((question) => question.answerType === "short_answer").length;
+    elements.total.textContent = analysis.questions.length;
     elements.multiple.textContent = multiple;
     elements.short.textContent = short;
-    elements.warning.textContent = warning;
-    elements.select.replaceChildren();
-    result.questions.forEach((question, index) => {
-      const option = document.createElement("option");
-      option.value = index;
-      option.textContent = `${String(question.ordinal).padStart(2, "0")}. ${question.sourceLabel} · ${question.answerType === "multiple_choice" ? "객관식" : "단답식"} · 정답 ${question.answer ?? "확인 필요"}`;
-      elements.select.append(option);
-    });
-    elements.status.className = "status success";
-    elements.status.textContent = `${file.name} · ${result.questions.length}문항 인식 완료`;
+    elements.pages.textContent = pageCount;
     elements.workspace.classList.remove("hidden");
-    renderQuestion();
+    renderPage(0);
+    setStatus(`${file.name} · ${analysis.questions.length}문항 · ${pageCount}페이지 준비 완료`, "success");
   } catch (error) {
-    elements.status.className = "status error";
-    elements.status.textContent = `분석 실패: ${error.message}`;
+    documentViewer?.free?.();
+    documentViewer = null;
+    pageCount = 0;
+    setStatus(`분석 실패: ${error.message}`, "error");
   }
 });
 
-elements.select.addEventListener("change", renderQuestion);
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    activeTab = tab.dataset.tab;
-    renderActiveTab();
-  });
-});
-elements.copy.addEventListener("click", async () => {
-  await navigator.clipboard.writeText(elements.code.textContent);
-  elements.copy.textContent = "복사됨";
-  setTimeout(() => { elements.copy.textContent = "XML 복사"; }, 1200);
-});
+elements.previous.addEventListener("click", () => renderPage(currentPage - 1));
+elements.next.addEventListener("click", () => renderPage(currentPage + 1));
+
+rhwpReady
+  .then(() => setStatus("렌더러 준비 완료. HWPX 파일을 선택하세요."))
+  .catch((error) => setStatus(`렌더러 준비 실패: ${error.message}`, "error"));

@@ -8,12 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@rhwp/core':
+        specifier: 0.8.4
+        version: 0.8.4
       jszip:
         specifier: 3.10.1
         version: 3.10.1
-      katex:
-        specifier: 0.18.4
-        version: 0.18.4
     devDependencies:
       node:
         specifier: runtime:24.19.0
@@ -26,6 +26,9 @@ packages:
 
   '@oxc-project/types@0.146.0':
     resolution: {integrity: sha512-XC0QsnnhVe7sLIWmYmdPw7x5P0h4W8vUU3Nv1ySgWXtvCz8NizoAEpGXA0sOYoJQV2Rl13LgURAHQ5cI5ILCSA==}
+
+  '@rhwp/core@0.8.4':
+    resolution: {integrity: sha512-Wr5HwQLzuGHHGfkJTvakRrB+BczyxnrRynwMBxDeoE2AxUU5z9GkqKhK+2Op9IS8Uq0KtA6c89PaCj1OA/QsfA==}
 
   '@rolldown/binding-android-arm-eabi@1.2.5':
     resolution: {integrity: sha512-DLe/i+l8ynIBY7XEQ191TeZvCoowIGa18R+dIV30GW7DiOtp74i/xX8hs8GUjW5ARV7VZuie3d6AumSmCwbeRA==}
@@ -126,10 +129,6 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
-  commander@8.3.0:
-    resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
-    engines: {node: '>= 12'}
-
   core-util-is@1.0.3:
     resolution: {integrity: sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==}
 
@@ -162,10 +161,6 @@ packages:
 
   jszip@3.10.1:
     resolution: {integrity: sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==}
-
-  katex@0.18.4:
-    resolution: {integrity: sha512-IMPntbRLOU+eu88XDiFKqQ8Akhr9Tv7jDMXqPhjG9SI1JMA4DIgXk4x9k4skJz2NZJXBRbC+2pYBLj9olqcZow==}
-    hasBin: true
 
   lie@3.3.0:
     resolution: {integrity: sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==}
@@ -462,6 +457,8 @@ snapshots:
 
   '@oxc-project/types@0.146.0': {}
 
+  '@rhwp/core@0.8.4': {}
+
   '@rolldown/binding-android-arm-eabi@1.2.5':
     optional: true
 
@@ -509,8 +506,6 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
-  commander@8.3.0: {}
-
   core-util-is@1.0.3: {}
 
   detect-libc@2.1.2: {}
@@ -534,10 +529,6 @@ snapshots:
       pako: 1.0.11
       readable-stream: 2.3.8
       setimmediate: 1.0.5
-
-  katex@0.18.4:
-    dependencies:
-      commander: 8.3.0
 
   lie@3.3.0:
     dependencies:

@@ -17,8 +17,8 @@
     "preview": "vite preview web --host 127.0.0.1"
   },
   "dependencies": {
-    "jszip": "3.10.1",
-    "katex": "0.18.4"
+    "@rhwp/core": "0.8.4",
+    "jszip": "3.10.1"
   },
   "devDependencies": {
     "vite": "8.2.2"

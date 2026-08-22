@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="HWPX 문제은행 문항과 미주를 브라우저에서 검사합니다." />
+    <meta name="description" content="HWPX 문제은행을 브라우저에서 분석하고 원본 페이지로 미리 봅니다." />
     <title>HWPX Exam Builder</title>
   </head>
   <body>
     <main class="shell">
       <header class="hero">
         <div>
-          <p class="eyebrow">HWPX QUESTION INSPECTOR</p>
+          <p class="eyebrow">HWPX QUESTION PREVIEW</p>
           <h1>HWPX Exam Builder</h1>
-          <p class="subtitle">문제은행을 브라우저 안에서 분석하고, 수식과 XML을 함께 확인합니다.</p>
+          <p class="subtitle">문제은행을 분석하고 한글 문서의 원본 페이지 형태로 확인합니다.</p>
         </div>
         <span class="privacy-badge">파일 외부 전송 없음</span>
       </header>
@@ -24,7 +24,7 @@
           <span>파일은 이 브라우저의 메모리에서만 처리됩니다.</span>
           <input id="hwpx-file" type="file" accept=".hwpx,application/zip" />
         </label>
-        <p class="status" id="status" aria-live="polite"></p>
+        <p class="status" id="status" aria-live="polite">렌더러를 준비하는 중입니다...</p>
       </section>
 
       <section class="workspace hidden" id="workspace">
@@ -32,48 +32,26 @@
           <article><span>인식 문항</span><strong id="metric-total">0</strong></article>
           <article><span>5지선다형</span><strong id="metric-multiple">0</strong></article>
           <article><span>단답식</span><strong id="metric-short">0</strong></article>
-          <article><span>구조 경고</span><strong id="metric-warning">0</strong></article>
+          <article><span>문서 페이지</span><strong id="metric-pages">0</strong></article>
         </div>
 
-        <div class="question-picker">
-          <label for="question-select">미리 볼 문항</label>
-          <select id="question-select"></select>
-        </div>
-
-        <div class="tabs" role="tablist" aria-label="문항 보기 방식">
-          <button class="tab active" data-tab="rendered" role="tab">읽기 화면</button>
-          <button class="tab" data-tab="body" role="tab">문제 XML</button>
-          <button class="tab" data-tab="answer" role="tab">정답 미주 XML</button>
-          <button class="tab" data-tab="explanation" role="tab">해설 미주 XML</button>
-          <button class="tab" data-tab="full" role="tab">전체 XML</button>
-        </div>
-
-        <section class="panel rendered-panel" id="panel-rendered">
-          <div class="question-heading">
+        <section class="viewer-card" aria-labelledby="viewer-title">
+          <header class="viewer-toolbar">
             <div>
-              <p class="eyebrow" id="question-kind"></p>
-              <h2 id="question-label"></h2>
+              <p class="eyebrow">RHWP PAGE RENDERER</p>
+              <h2 id="viewer-title">원본 페이지 미리보기</h2>
             </div>
-            <div class="answer-pill" id="answer-pill"></div>
+            <nav class="page-controls" aria-label="페이지 이동">
+              <button id="previous-page" type="button" aria-label="이전 페이지">이전</button>
+              <span id="page-label" aria-live="polite">1 / 1</span>
+              <button id="next-page" type="button" aria-label="다음 페이지">다음</button>
+            </nav>
+          </header>
+          <div class="page-stage" id="page-stage">
+            <div class="page-loading" id="page-loading">페이지를 렌더링하는 중입니다...</div>
+            <div class="page-canvas" id="page-canvas"></div>
           </div>
-          <article class="math-document" id="question-content"></article>
-          <ol class="choices" id="choice-list"></ol>
-          <details class="explanation" open>
-            <summary>해설</summary>
-            <div id="explanation-content"></div>
-          </details>
-          <div class="warning-list" id="warning-list"></div>
-        </section>
-
-        <section class="panel code-panel hidden" id="panel-code">
-          <div class="code-heading">
-            <div>
-              <p class="eyebrow">ORIGINAL HWPX XML</p>
-              <h2 id="code-title">문제 XML</h2>
-            </div>
-            <button id="copy-xml" type="button">XML 복사</button>
-          </div>
-          <pre><code id="xml-code"></code></pre>
+          <p class="viewer-note">미리보기에는 XML 코드가 표시되지 않습니다. 페이지는 브라우저에서 직접 생성됩니다.</p>
         </section>
       </section>
     </main>

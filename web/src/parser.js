@@ -80,6 +80,40 @@ function formatXml(xml) {
     .join("\n");
 }
 
+export async function prepareHwpxForPreview(data) {
+  const zip = await JSZip.loadAsync(data);
+  const sectionNames = Object.keys(zip.files).filter((name) => /^Contents\/section\d+\.xml$/.test(name));
+  const watermarkSuffix = /(?:^|\r?\n)\s*from\s*\r?\n\s*={20,}[\s\S]*$/i;
+
+  await Promise.all(sectionNames.map(async (sectionName) => {
+    const xml = await zip.file(sectionName).async("string");
+    const documentNode = new DOMParser().parseFromString(xml, "application/xml");
+    if (documentNode.querySelector("parsererror")) return;
+
+    descendants(documentNode.documentElement, "script").forEach((script) => {
+      const cleaned = (script.textContent || "").replace(watermarkSuffix, "").trim();
+      if (cleaned) {
+        script.textContent = cleaned;
+        return;
+      }
+      let equation = script.parentElement;
+      while (equation && localName(equation) !== "equation") equation = equation.parentElement;
+      equation?.remove();
+    });
+
+    descendants(documentNode.documentElement, "t").forEach((textNode) => {
+      if ((textNode.textContent || "").trim().toLowerCase() === "zb") textNode.textContent = "";
+    });
+    zip.file(sectionName, new XMLSerializer().serializeToString(documentNode));
+  }));
+
+  return zip.generateAsync({
+    type: "uint8array",
+    compression: "DEFLATE",
+    compressionOptions: { level: 3 },
+  });
+}
+
 async function bytesForRef(zip, ref) {
   const prefix = `BinData/${ref}.`;
   const path = Object.keys(zip.files).find((name) => name.startsWith(prefix));
