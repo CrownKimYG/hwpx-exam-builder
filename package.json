@@ -1,0 +1,26 @@
+{
+  "name": "hwpx-exam-builder-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@11.19.0",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.19.0",
+      "onFail": "download"
+    }
+  },
+  "scripts": {
+    "dev": "vite web --host 127.0.0.1",
+    "build": "vite build web --base=./",
+    "preview": "vite preview web --host 127.0.0.1"
+  },
+  "dependencies": {
+    "jszip": "3.10.1",
+    "katex": "0.18.4"
+  },
+  "devDependencies": {
+    "vite": "8.2.2"
+  }
+}
