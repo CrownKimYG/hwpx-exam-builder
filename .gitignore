@@ -24,6 +24,8 @@ htmlcov/
 # HWP/HWPX documents and private question-bank data
 *.hwp
 *.hwpx
+!web/public/templates/
+!web/public/templates/basic-math-exam.hwpx
 data/
 samples/private/
 
