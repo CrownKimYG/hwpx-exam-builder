@@ -59,7 +59,7 @@ function applyFieldsInParagraph(paragraph, values) {
     if (begin) {
       const name = (begin.getAttribute("name") || "").trim();
       active = Object.prototype.hasOwnProperty.call(values, name)
-        ? { id: begin.getAttribute("id"), name, value: String(values[name] ?? "") }
+        ? { id: begin.getAttribute("id"), value: String(values[name] ?? "") }
         : null;
       written = false;
     }
@@ -83,8 +83,38 @@ function applyFieldsInParagraph(paragraph, values) {
   }
 }
 
+async function repackHwpx(zip, overrides) {
+  const output = new JSZip();
+  const mimetypeEntry = zip.file("mimetype");
+  if (!mimetypeEntry) throw new Error("HWPX mimetype 항목을 찾을 수 없습니다.");
+
+  output.file("mimetype", await mimetypeEntry.async("uint8array"), {
+    binary: true,
+    compression: "STORE",
+  });
+
+  for (const entry of Object.values(zip.files)) {
+    if (entry.dir || entry.name === "mimetype") continue;
+    const replacement = overrides.get(entry.name);
+    const content = replacement ?? await entry.async("uint8array");
+    output.file(entry.name, content, {
+      binary: replacement == null,
+      compression: "DEFLATE",
+      date: entry.date,
+    });
+  }
+
+  return output.generateAsync({
+    type: "uint8array",
+    mimeType: "application/vnd.hancom.hwpx",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+}
+
 export async function applyTemplateFieldValues(data, values) {
   const zip = await JSZip.loadAsync(data, { checkCRC32: true });
+  const overrides = new Map();
   const sectionNames = Object.keys(zip.files)
     .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
     .sort();
@@ -92,13 +122,8 @@ export async function applyTemplateFieldValues(data, values) {
   for (const sectionName of sectionNames) {
     const documentNode = parseXml(await zip.file(sectionName).async("string"), sectionName);
     descendants(documentNode.documentElement, "p").forEach((paragraph) => applyFieldsInParagraph(paragraph, values));
-    zip.file(sectionName, new XMLSerializer().serializeToString(documentNode));
+    overrides.set(sectionName, new XMLSerializer().serializeToString(documentNode));
   }
 
-  return zip.generateAsync({
-    type: "uint8array",
-    mimeType: "application/vnd.hancom.hwpx",
-    compression: "DEFLATE",
-    compressionOptions: { level: 6 },
-  });
+  return repackHwpx(zip, overrides);
 }
