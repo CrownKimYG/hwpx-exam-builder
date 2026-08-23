@@ -32,8 +32,21 @@ h1 { margin: 0; font-family: Georgia, "Noto Serif KR", serif; font-size: clamp(3
 .template-summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .template-summary h2 { margin: 0; font-family: Georgia, "Noto Serif KR", serif; font-size: 25px; }
 .template-summary p:last-child { margin: 8px 0 0; color: #617178; font-size: 14px; }
-.template-download { padding: 10px 14px; border: 1px solid #8eb7b3; border-radius: 10px; color: #176960; font-size: 14px; font-weight: 800; text-decoration: none; white-space: nowrap; }
-.template-download:hover { background: #eff9f7; }
+.template-upload { position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 10px 14px; border: 1px solid #8eb7b3; border-radius: 10px; color: #176960; font-size: 14px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.template-upload:hover { background: #eff9f7; }
+.template-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.template-file-name { margin: 15px 0 0; color: #5b6d74; font-size: 13px; }
+.template-fields { margin-top: 16px; padding: 18px; border: 1px solid #dbe5e5; border-radius: 12px; background: #f8fbfa; }
+.template-fields h3 { margin: 0; font-size: 16px; }
+.template-fields > p { margin: 6px 0 14px; color: #65767d; font-size: 13px; }
+.field-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.field-control { display: grid; gap: 7px; min-width: 0; }
+.field-control span { color: #40575e; font-size: 12px; font-weight: 800; }
+.field-control input { width: 100%; padding: 10px 11px; border: 1px solid #b8c7ca; border-radius: 8px; background: white; color: #18232d; outline: none; }
+.field-control input:focus { border-color: #25766f; box-shadow: 0 0 0 3px rgba(37,118,111,.11); }
+#download-filled-template { margin-top: 14px; padding: 9px 12px; border: 1px solid #8eb7b3; border-radius: 9px; background: white; color: #176960; font-weight: 800; cursor: pointer; }
+#download-filled-template:hover:not(:disabled) { background: #eff9f7; }
+#download-filled-template:disabled { opacity: .45; cursor: default; }
 .builder-actions { display: flex; align-items: center; gap: 10px; margin-top: 20px; padding-top: 18px; border-top: 1px solid #e1e7e9; }
 .builder-actions > span { margin-right: auto; color: #40575e; }
 .builder-actions > span strong { color: #176960; font-size: 23px; }
@@ -85,6 +98,7 @@ h1 { margin: 0; font-family: Georgia, "Noto Serif KR", serif; font-size: clamp(3
   .shell { width: min(100% - 20px, 1180px); padding-top: 26px; }
   .hero, .viewer-toolbar, .template-summary, .question-toolbar { flex-direction: column; align-items: stretch; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
+  .field-grid { grid-template-columns: 1fr; }
   .page-controls, .question-controls { justify-content: space-between; }
   .builder-actions { flex-wrap: wrap; }
   .builder-actions > span { width: 100%; }

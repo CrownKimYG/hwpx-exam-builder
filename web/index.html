@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="HWPX 문제은행을 브라우저에서 분석하고 원본 페이지로 미리 봅니다." />
+    <meta name="description" content="HWPX 문제은행을 브라우저에서 분석하고 시험지 템플릿의 누름틀 값을 입력합니다." />
     <title>HWPX Exam Builder</title>
   </head>
   <body>
@@ -20,7 +20,7 @@
       <section class="upload-card" id="upload-card">
         <label class="file-drop" for="hwpx-file">
           <span class="file-icon">HWPX</span>
-          <strong>첫 번째 샘플 형식의 HWPX를 선택하세요</strong>
+          <strong>문제은행 HWPX를 선택하세요</strong>
           <span>파일은 이 브라우저의 메모리에서만 처리됩니다.</span>
           <input id="hwpx-file" type="file" accept=".hwpx,application/zip" />
         </label>
@@ -38,11 +38,21 @@
         <section class="builder-card" aria-labelledby="builder-title">
           <div class="template-summary">
             <div>
-              <p class="eyebrow">BUILT-IN HWPX TEMPLATE</p>
-              <h2 id="builder-title">기본 2단 수학 시험지</h2>
-              <p>A4 · 좌우 15 mm · 2단 · 제목/이름/점수란 · 가운데 쪽 번호</p>
+              <p class="eyebrow">HWPX TEMPLATE</p>
+              <h2 id="builder-title">시험지 템플릿</h2>
+              <p>누름틀 필드명을 자동으로 읽어 시험지 생성용 입력칸을 만듭니다.</p>
             </div>
-            <a class="template-download" href="./templates/basic-math-exam.hwpx" download>샘플 템플릿 받기</a>
+            <label class="template-upload" for="template-file">
+              템플릿 선택
+              <input id="template-file" type="file" accept=".hwpx,application/zip" />
+            </label>
+          </div>
+          <p class="template-file-name" id="template-file-name">템플릿을 선택하지 않았습니다.</p>
+          <div class="template-fields hidden" id="template-fields">
+            <h3>누름틀 입력값</h3>
+            <p>같은 필드명이 여러 곳에 있으면 한 번 입력한 값이 모두 적용됩니다.</p>
+            <div class="field-grid" id="field-grid"></div>
+            <button id="download-filled-template" type="button" disabled>입력값 적용본 시험 다운로드</button>
           </div>
           <div class="builder-actions">
             <span><strong id="selected-count">0</strong>개 문항 선택</span>
