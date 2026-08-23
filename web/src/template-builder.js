@@ -2,6 +2,7 @@ import JSZip from "jszip";
 
 const SECTION_RE = /^Contents\/section\d+\.xml$/;
 const SLOT_RE = /^#(\d+)$/;
+const SEQUENTIAL_MARKER = "{{QUESTIONS}}";
 
 const localName = (node) => node.localName || node.nodeName.split(":").pop();
 const descendants = (element, name) => Array.from(element.getElementsByTagNameNS("*", name));
@@ -35,6 +36,10 @@ function findSlots(root) {
   return descendants(root, "p")
     .map((paragraph) => paragraphSlot(paragraph))
     .filter(Boolean);
+}
+
+function findSequentialMarkers(root) {
+  return descendants(root, "p").filter((paragraph) => textOf(paragraph) === SEQUENTIAL_MARKER);
 }
 
 function canonicalSlots(records) {
@@ -419,6 +424,12 @@ export async function validateGeneratedExamHwpx(
   if (remainingSlots.length) {
     errors.push(`치환되지 않은 문제 슬롯이 ${remainingSlots.length}개 남았습니다.`);
   }
+  const remainingSequentialMarkers = sectionDocuments.flatMap((documentNode) => (
+    findSequentialMarkers(documentNode.documentElement)
+  ));
+  if (remainingSequentialMarkers.length) {
+    errors.push(`치환되지 않은 연속 문제 삽입 지점이 ${remainingSequentialMarkers.length}개 남았습니다.`);
+  }
   sectionDocuments.forEach((documentNode) => {
     const children = Array.from(documentNode.documentElement.children);
     const markerIndex = children.findIndex((child) => (
@@ -532,6 +543,7 @@ export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, ques
     throw new Error("선택 문항 일부를 문제은행 분석 결과에서 찾지 못했습니다.");
   }
   const allSlotRecords = [];
+  const sequentialRecords = [];
   const templateSections = new Map();
   for (const sectionName of templateSectionNames) {
     const documentNode = parseXml(await templateZip.file(sectionName).async("string"), sectionName);
@@ -540,6 +552,9 @@ export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, ques
     findSlots(documentNode.documentElement).forEach((slot) => {
       allSlotRecords.push({ sectionName, ...slot, documentNode });
     });
+    findSequentialMarkers(documentNode.documentElement).forEach((element) => {
+      sequentialRecords.push({ sectionName, element, documentNode });
+    });
     templateSections.set(sectionName, documentNode);
   }
   const slotRecords = canonicalSlots(allSlotRecords);
@@ -547,17 +562,16 @@ export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, ques
   allSlotRecords
     .filter((slot) => !canonicalElements.has(slot.element))
     .forEach((slot) => clearSlotMarker(slot.element));
-  if (selectedQuestions.length > slotRecords.length) {
+  const sequentialRecord = slotRecords.length ? null : sequentialRecords[0] || null;
+  sequentialRecords.slice(sequentialRecord ? 1 : 0).forEach((record) => clearSlotMarker(record.element));
+  if (!slotRecords.length && !sequentialRecord) {
+    throw new Error("템플릿에서 #1 문제 슬롯 또는 {{QUESTIONS}} 연속 삽입 지점을 찾지 못했습니다.");
+  }
+  if (!sequentialRecord && selectedQuestions.length > slotRecords.length) {
     throw new Error(`선택 문항 ${selectedQuestions.length}개에 비해 템플릿 문제 슬롯은 ${slotRecords.length}개뿐입니다.`);
   }
 
-  for (let index = 0; index < slotRecords.length; index += 1) {
-    const slot = slotRecords[index];
-    const question = selectedQuestions[index];
-    if (!question) {
-      clearSlotMarker(slot.element);
-      continue;
-    }
+  const cloneQuestion = (question, targetDocument) => {
     const sourceDocument = sourceSectionDocuments.get(question.sectionName);
     if (!sourceDocument) throw new Error(`${question.sectionName} 원문을 찾지 못했습니다.`);
     const children = Array.from(sourceDocument.documentElement.children);
@@ -573,12 +587,33 @@ export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, ques
     if (question.hasEndnote && countNamed(sourceElements, "endNote") === 0) {
       throw new Error(`${question.sourceLabel || question.ordinal}의 정답·해설 미주가 복사 범위에서 누락됐습니다.`);
     }
-    const clones = sourceElements.map((element) => slot.documentNode.importNode(element, true));
+    const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
     clones.forEach((clone) => removeLayoutControls(clone));
     ensureLeftParagraphStyles(sourceHeaderDocument, clones);
-    const parent = slot.element.parentNode;
-    clones.forEach((clone) => parent.insertBefore(clone, slot.element));
-    parent.removeChild(slot.element);
+    return clones;
+  };
+
+  if (sequentialRecord) {
+    clearSlotMarker(sequentialRecord.element);
+    const parent = sequentialRecord.element.parentNode;
+    const insertionPoint = sequentialRecord.element.nextSibling;
+    selectedQuestions.forEach((question) => {
+      cloneQuestion(question, sequentialRecord.documentNode)
+        .forEach((clone) => parent.insertBefore(clone, insertionPoint));
+    });
+  } else {
+    for (let index = 0; index < slotRecords.length; index += 1) {
+      const slot = slotRecords[index];
+      const question = selectedQuestions[index];
+      if (!question) {
+        clearSlotMarker(slot.element);
+        continue;
+      }
+      const clones = cloneQuestion(question, slot.documentNode);
+      const parent = slot.element.parentNode;
+      clones.forEach((clone) => parent.insertBefore(clone, slot.element));
+      parent.removeChild(slot.element);
+    }
   }
 
   updateSectionsInContent(sourceContentDocument, templateSectionNames);

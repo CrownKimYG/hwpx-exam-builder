@@ -9,9 +9,13 @@ import {
   validateGeneratedExamHwpx,
 } from "./template-builder.js";
 
+const DEFAULT_TEMPLATE_URL = "./templates/basic-math-exam.hwpx";
+
 const elements = {
   file: document.querySelector("#hwpx-file"),
+  fileDrop: document.querySelector(".file-drop"),
   templateFile: document.querySelector("#template-file"),
+  templateDrop: document.querySelector("#template-drop"),
   templateFileName: document.querySelector("#template-file-name"),
   templateFields: document.querySelector("#template-fields"),
   fieldGrid: document.querySelector("#field-grid"),
@@ -28,26 +32,11 @@ const elements = {
   pageStage: document.querySelector("#page-stage"),
   pageCanvas: document.querySelector("#page-canvas"),
   pageLoading: document.querySelector("#page-loading"),
+  questionOrder: document.querySelector("#question-order"),
+  clearOrder: document.querySelector("#clear-order"),
   selectedCount: document.querySelector("#selected-count"),
-  selectAll: document.querySelector("#select-all"),
-  clearSelection: document.querySelector("#clear-selection"),
   buildExam: document.querySelector("#build-exam"),
   buildStatus: document.querySelector("#build-status"),
-  previousQuestion: document.querySelector("#previous-question"),
-  nextQuestion: document.querySelector("#next-question"),
-  questionPosition: document.querySelector("#question-position"),
-  questionType: document.querySelector("#question-type"),
-  questionLabel: document.querySelector("#question-label"),
-  questionSelected: document.querySelector("#question-selected"),
-  questionText: document.querySelector("#question-text"),
-  problemEquationCount: document.querySelector("#problem-equation-count"),
-  problemEquations: document.querySelector("#problem-equations"),
-  answerValue: document.querySelector("#answer-value"),
-  answerText: document.querySelector("#answer-text"),
-  answerEquations: document.querySelector("#answer-equations"),
-  explanationEquationCount: document.querySelector("#explanation-equation-count"),
-  explanationText: document.querySelector("#explanation-text"),
-  explanationEquations: document.querySelector("#explanation-equations"),
 };
 
 const FIELD_LABELS = {
@@ -75,12 +64,13 @@ let currentPage = 0;
 let pageCount = 0;
 let analysisResult = null;
 let sourceBytes = null;
-let currentQuestion = 0;
+let sourceFilename = "";
 let templateBytes = null;
 let templateFilename = "";
 let templateFieldDefinitions = [];
 let templateSlotCount = 0;
-const selectedQuestions = new Set();
+let selectedOrdinals = [];
+let defaultTemplatePromise = null;
 const templateFieldValues = new Map();
 const manuallyEditedFields = new Set();
 
@@ -132,37 +122,12 @@ function renderPage(pageIndex) {
   }
 }
 
-function equationCard(equation, label) {
-  const card = document.createElement("div");
-  card.className = "equation-preview";
-  try {
-    const svg = documentViewer.renderEquationPreview(equation.normalizedScript, 1100, 0);
-    card.appendChild(safeSvg(svg, label));
-  } catch (error) {
-    card.classList.add("equation-error");
-    card.textContent = "수식 미리보기를 만들지 못했습니다.";
-    card.title = error.message;
-  }
-  return card;
-}
-
-function renderEquationGroup(container, equations, label) {
-  if (!equations.length) {
-    const empty = document.createElement("p");
-    empty.className = "equation-empty";
-    empty.textContent = "수식 없음";
-    container.replaceChildren(empty);
-    return;
-  }
-  container.replaceChildren(...equations.map((equation, index) => equationCard(equation, `${label} ${index + 1}`)));
-}
-
 function fieldValuesObject() {
   return Object.fromEntries(templateFieldValues.entries());
 }
 
 function syncQuestionCountField() {
-  const value = String(selectedQuestions.size);
+  const value = String(selectedOrdinals.length);
   templateFieldDefinitions
     .filter((field) => QUESTION_COUNT_FIELDS.has(field.name))
     .forEach((field) => {
@@ -187,9 +152,7 @@ function renderTemplateFields(fields) {
     input.dataset.fieldName = field.name;
     input.placeholder = field.placeholder || field.name;
     const preservedValue = /\{\{[^{}]+\}\}/.test(field.placeholder || "") ? "" : field.placeholder || "";
-    const initialValue = QUESTION_COUNT_FIELDS.has(field.name)
-      ? String(selectedQuestions.size)
-      : preservedValue;
+    const initialValue = QUESTION_COUNT_FIELDS.has(field.name) ? String(selectedOrdinals.length) : preservedValue;
     input.value = initialValue;
     templateFieldValues.set(field.name, initialValue);
     input.addEventListener("input", () => {
@@ -204,44 +167,51 @@ function renderTemplateFields(fields) {
   elements.downloadFilledTemplate.disabled = !fields.length || !templateBytes;
 }
 
-function updateSelection() {
-  const count = selectedQuestions.size;
-  elements.selectedCount.textContent = count;
-  const exceedsSlots = templateBytes && templateSlotCount > 0 && count > templateSlotCount;
-  elements.buildExam.disabled = count === 0 || !analysisResult || !templateBytes || templateSlotCount === 0 || exceedsSlots;
-  if (analysisResult?.questions[currentQuestion]) {
-    elements.questionSelected.checked = selectedQuestions.has(analysisResult.questions[currentQuestion].ordinal);
+function parseQuestionOrder(value, { reportEmpty = false } = {}) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    if (reportEmpty) throw new Error("문항 번호를 띄어쓰기로 입력하세요. 예: 4 1 5 6");
+    return [];
   }
-  syncQuestionCountField();
-  if (exceedsSlots) {
-    elements.buildStatus.textContent = `선택 문항 ${count}개가 템플릿 문제 슬롯 ${templateSlotCount}개를 초과했습니다.`;
+  const tokens = trimmed.split(/[\s,]+/).filter(Boolean);
+  if (tokens.some((token) => !/^\d+$/.test(token))) {
+    throw new Error("문항 번호는 숫자와 띄어쓰기만 사용하세요.");
   }
+  const ordinals = tokens.map(Number);
+  const maximum = analysisResult?.questions.length || 0;
+  const invalid = ordinals.find((ordinal) => ordinal < 1 || ordinal > maximum);
+  if (invalid != null) throw new Error(`${invalid}번 문항은 없습니다. 1부터 ${maximum}까지 입력하세요.`);
+  const duplicate = ordinals.find((ordinal, index) => ordinals.indexOf(ordinal) !== index);
+  if (duplicate != null) throw new Error(`${duplicate}번 문항이 중복 입력되었습니다.`);
+  return ordinals;
 }
 
-function renderQuestion(index) {
-  if (!analysisResult?.questions.length) return;
-  currentQuestion = Math.max(0, Math.min(index, analysisResult.questions.length - 1));
-  const question = analysisResult.questions[currentQuestion];
-  elements.questionPosition.textContent = `${currentQuestion + 1} / ${analysisResult.questions.length}`;
-  elements.previousQuestion.disabled = currentQuestion === 0;
-  elements.nextQuestion.disabled = currentQuestion === analysisResult.questions.length - 1;
-  elements.questionType.textContent = question.answerType === "multiple_choice" ? "5지선다형" : "단답식";
-  elements.questionLabel.textContent = question.sourceLabel || `문항 ${question.ordinal}`;
-  elements.questionText.textContent = question.questionText || "문항 본문은 원본 페이지에서 확인하세요.";
-  elements.problemEquationCount.textContent = question.equations.problem.length;
-  elements.answerValue.textContent = question.answerType === "multiple_choice" && question.answer
-    ? `${["", "①", "②", "③", "④", "⑤"][question.answer] || question.answer}` : "";
-  elements.answerText.textContent = question.answerText || (question.answer ? String(question.answer) : "정답 정보 없음");
-  elements.explanationEquationCount.textContent = question.equations.explanation.length;
-  elements.explanationText.textContent = question.explanationText || "해설 텍스트 없음";
-  renderEquationGroup(elements.problemEquations, question.equations.problem, "문제 수식");
-  renderEquationGroup(elements.answerEquations, question.equations.answer, "정답 수식");
-  renderEquationGroup(elements.explanationEquations, question.equations.explanation, "해설 수식");
-  updateSelection();
-}
-
-function moveQuestion(offset) {
-  renderQuestion(currentQuestion + offset);
+function refreshOrder({ showError = false } = {}) {
+  try {
+    selectedOrdinals = analysisResult ? parseQuestionOrder(elements.questionOrder.value) : [];
+    const exceedsSlots = Boolean(templateBytes && templateSlotCount > 0 && selectedOrdinals.length > templateSlotCount);
+    const unusableTemplate = Boolean(templateBytes && templateSlotCount === 0);
+    elements.selectedCount.textContent = selectedOrdinals.length;
+    elements.buildExam.disabled = !analysisResult || selectedOrdinals.length === 0 || exceedsSlots || unusableTemplate;
+    elements.questionOrder.setAttribute("aria-invalid", "false");
+    syncQuestionCountField();
+    if (exceedsSlots) {
+      elements.buildStatus.textContent = `입력 문항 ${selectedOrdinals.length}개가 템플릿 문제 슬롯 ${templateSlotCount}개를 초과했습니다.`;
+    } else if (showError) {
+      elements.buildStatus.textContent = selectedOrdinals.length
+        ? `${selectedOrdinals.join(" → ")} 순서로 ${selectedOrdinals.length}문항을 생성합니다.`
+        : "";
+    }
+    return true;
+  } catch (error) {
+    selectedOrdinals = [];
+    elements.selectedCount.textContent = "0";
+    elements.buildExam.disabled = true;
+    elements.questionOrder.setAttribute("aria-invalid", "true");
+    if (showError || elements.questionOrder.value.trim()) elements.buildStatus.textContent = error.message;
+    syncQuestionCountField();
+    return false;
+  }
 }
 
 function downloadBytes(bytes, filename) {
@@ -254,9 +224,17 @@ function downloadBytes(bytes, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-elements.file.addEventListener("change", async (event) => {
-  const [file] = event.target.files;
-  if (!file) return;
+function ensureHwpxFile(file, label) {
+  if (!file?.name.toLowerCase().endsWith(".hwpx")) throw new Error(`${label}은 HWPX 파일만 사용할 수 있습니다.`);
+}
+
+async function loadQuestionBank(file) {
+  try {
+    ensureHwpxFile(file, "문제은행");
+  } catch (error) {
+    setStatus(error.message, "error");
+    return;
+  }
   setStatus("HWPX 문항을 분석하고 원본 페이지를 구성하는 중입니다...", "loading");
   elements.workspace.classList.add("hidden");
   elements.pageCanvas.replaceChildren();
@@ -267,58 +245,152 @@ elements.file.addEventListener("change", async (event) => {
     documentViewer = new HwpDocument(previewBytes);
     pageCount = documentViewer.pageCount();
     if (!pageCount) throw new Error("렌더링할 페이지를 찾지 못했습니다.");
-    const multiple = analysis.questions.filter((question) => question.answerType === "multiple_choice").length;
-    const short = analysis.questions.filter((question) => question.answerType === "short_answer").length;
     elements.total.textContent = analysis.questions.length;
-    elements.multiple.textContent = multiple;
-    elements.short.textContent = short;
+    elements.multiple.textContent = analysis.questions.filter((question) => question.answerType === "multiple_choice").length;
+    elements.short.textContent = analysis.questions.filter((question) => question.answerType === "short_answer").length;
     elements.pages.textContent = pageCount;
     analysisResult = analysis;
     sourceBytes = bytes;
-    currentQuestion = 0;
-    selectedQuestions.clear();
+    sourceFilename = file.name;
+    selectedOrdinals = [];
+    elements.questionOrder.value = "";
     elements.workspace.classList.remove("hidden");
     renderPage(0);
-    renderQuestion(0);
+    refreshOrder();
     elements.buildStatus.textContent = templateBytes
-      ? `템플릿 문제 슬롯 ${templateSlotCount}개가 준비됐습니다.`
-      : "문항을 선택하고 시험지 템플릿을 지정하세요.";
+      ? `템플릿 문제 슬롯 ${templateSlotCount}개가 준비됐습니다. 문항 번호를 입력하세요.`
+      : "문항 번호를 입력하면 내장 빈 2단 템플릿으로 생성합니다.";
     setStatus(`${file.name} · ${analysis.questions.length}문항 · ${pageCount}페이지 준비 완료`, "success");
+    elements.questionOrder.focus();
   } catch (error) {
     documentViewer?.free?.();
     documentViewer = null;
     analysisResult = null;
     sourceBytes = null;
+    sourceFilename = "";
     pageCount = 0;
     setStatus(`분석 실패: ${error.message}`, "error");
   }
-});
+}
 
-elements.templateFile.addEventListener("change", async (event) => {
-  const [file] = event.target.files;
-  if (!file) return;
+async function loadTemplate(file) {
   try {
-    templateBytes = new Uint8Array(await file.arrayBuffer());
+    ensureHwpxFile(file, "템플릿");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const [fields, slots] = await Promise.all([inspectTemplateFields(bytes), inspectTemplateSlots(bytes)]);
+    if (!slots.length) throw new Error("#1, #2 형식의 문제 슬롯을 찾지 못했습니다.");
+    templateBytes = bytes;
     templateFilename = file.name;
-    const [fields, slots] = await Promise.all([
-      inspectTemplateFields(templateBytes),
-      inspectTemplateSlots(templateBytes),
-    ]);
     templateSlotCount = slots.length;
     renderTemplateFields(fields);
-    elements.templateFileName.textContent = `${file.name} · 문제 슬롯 ${templateSlotCount}개 · 누름틀 ${fields.reduce((sum, field) => sum + field.count, 0)}곳 · 필드 ${fields.length}종`;
+    elements.templateFileName.textContent = `${file.name} · 문제 슬롯 ${templateSlotCount}개 · 누름틀 ${fields.reduce((sum, field) => sum + field.count, 0)}곳`;
     elements.buildStatus.textContent = templateSlotCount
-      ? `#1~#${templateSlotCount} 문제 슬롯과 누름틀 ${fields.map((field) => field.name).join(", ") || "없음"}을 찾았습니다.`
-      : "#1, #2 형식의 문제 슬롯을 찾지 못했습니다.";
-    updateSelection();
+      ? `#1~#${templateSlotCount} 문제 슬롯을 찾았습니다. 입력 순서대로 채웁니다.`
+      : "이 템플릿에서 #1, #2 형식의 문제 슬롯을 찾지 못했습니다.";
+    refreshOrder();
   } catch (error) {
     templateBytes = null;
     templateFilename = "";
     templateSlotCount = 0;
     renderTemplateFields([]);
-    elements.templateFileName.textContent = `템플릿 분석 실패: ${error.message}`;
-    updateSelection();
+    elements.templateFileName.textContent = `템플릿 분석 실패: ${error.message} · 내장 빈 템플릿을 사용합니다.`;
+    refreshOrder();
   }
+}
+
+function bindDropZone(zone, input, loader) {
+  let dragDepth = 0;
+  input.addEventListener("change", () => {
+    const [file] = input.files;
+    if (file) loader(file);
+    input.value = "";
+  });
+  zone.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+    dragDepth += 1;
+    zone.classList.add("is-dragging");
+  });
+  zone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  });
+  zone.addEventListener("dragleave", (event) => {
+    event.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) zone.classList.remove("is-dragging");
+  });
+  zone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dragDepth = 0;
+    zone.classList.remove("is-dragging");
+    const [file] = event.dataTransfer?.files || [];
+    if (file) loader(file);
+  });
+}
+
+async function getDefaultTemplateBytes() {
+  if (!defaultTemplatePromise) {
+    defaultTemplatePromise = fetch(DEFAULT_TEMPLATE_URL).then(async (response) => {
+      if (!response.ok) throw new Error("내장 빈 템플릿을 불러오지 못했습니다.");
+      return new Uint8Array(await response.arrayBuffer());
+    });
+  }
+  return defaultTemplatePromise;
+}
+
+async function createExam() {
+  if (!analysisResult || !sourceBytes || !refreshOrder({ showError: true })) return;
+  try {
+    selectedOrdinals = parseQuestionOrder(elements.questionOrder.value, { reportEmpty: true });
+  } catch (error) {
+    elements.buildStatus.textContent = error.message;
+    return;
+  }
+  elements.buildExam.disabled = true;
+  const usingCustomTemplate = Boolean(templateBytes);
+  elements.buildStatus.textContent = usingCustomTemplate
+    ? "입력 순서대로 템플릿 문제 슬롯에 문항과 미주를 붙여넣는 중입니다..."
+    : "입력 순서대로 내장 빈 2단 템플릿에 문항과 미주를 붙여넣는 중입니다...";
+  try {
+    if (usingCustomTemplate && selectedOrdinals.length > templateSlotCount) {
+      throw new Error(`입력 문항 ${selectedOrdinals.length}개가 템플릿 문제 슬롯 ${templateSlotCount}개를 초과했습니다.`);
+    }
+    const baseTemplate = usingCustomTemplate ? templateBytes : await getDefaultTemplateBytes();
+    const preparedTemplate = usingCustomTemplate
+      ? await applyTemplateFieldValues(baseTemplate, fieldValuesObject())
+      : baseTemplate;
+    const bytes = await buildExamFromTemplateHwpx(
+      sourceBytes,
+      preparedTemplate,
+      analysisResult.questions,
+      selectedOrdinals,
+    );
+    const validation = await validateGeneratedExamHwpx(bytes, {
+      expectedQuestionCount: selectedOrdinals.length,
+      expectedEndnoteCount: selectedOrdinals.length,
+    });
+    const verification = new HwpDocument(bytes);
+    const generatedPages = verification.pageCount();
+    verification.free?.();
+    if (!generatedPages) throw new Error("생성된 시험지에 표시할 페이지가 없습니다.");
+    const stem = (usingCustomTemplate ? templateFilename : sourceFilename).replace(/\.hwpx$/i, "") || "시험지";
+    downloadBytes(bytes, `${stem}_선택${selectedOrdinals.length}문항.hwpx`);
+    elements.buildStatus.textContent = `${selectedOrdinals.join(" → ")} 순서 · 미주 ${validation.endnoteCount}개 · ${generatedPages}페이지 검증 완료`;
+  } catch (error) {
+    elements.buildStatus.textContent = `시험지 생성 실패: ${error.message}`;
+  } finally {
+    refreshOrder();
+  }
+}
+
+bindDropZone(elements.fileDrop, elements.file, loadQuestionBank);
+bindDropZone(elements.templateDrop, elements.templateFile, loadTemplate);
+
+document.addEventListener("dragover", (event) => {
+  if (Array.from(event.dataTransfer?.types || []).includes("Files")) event.preventDefault();
+});
+document.addEventListener("drop", (event) => {
+  if (Array.from(event.dataTransfer?.types || []).includes("Files")) event.preventDefault();
 });
 
 elements.downloadFilledTemplate.addEventListener("click", async () => {
@@ -338,70 +410,20 @@ elements.downloadFilledTemplate.addEventListener("click", async () => {
 
 elements.previous.addEventListener("click", () => renderPage(currentPage - 1));
 elements.next.addEventListener("click", () => renderPage(currentPage + 1));
-elements.previousQuestion.addEventListener("click", () => moveQuestion(-1));
-elements.nextQuestion.addEventListener("click", () => moveQuestion(1));
-elements.questionSelected.addEventListener("change", () => {
-  const question = analysisResult?.questions[currentQuestion];
-  if (!question) return;
-  if (elements.questionSelected.checked) selectedQuestions.add(question.ordinal);
-  else selectedQuestions.delete(question.ordinal);
-  updateSelection();
+elements.questionOrder.addEventListener("input", () => refreshOrder({ showError: true }));
+elements.questionOrder.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  createExam();
 });
-elements.selectAll.addEventListener("click", () => {
-  analysisResult?.questions.forEach((question) => selectedQuestions.add(question.ordinal));
-  updateSelection();
+elements.clearOrder.addEventListener("click", () => {
+  elements.questionOrder.value = "";
+  refreshOrder();
+  elements.buildStatus.textContent = "문항 번호를 입력하세요. 예: 4 1 5 6";
+  elements.questionOrder.focus();
 });
-elements.clearSelection.addEventListener("click", () => {
-  selectedQuestions.clear();
-  updateSelection();
-});
-elements.buildExam.addEventListener("click", async () => {
-  if (!analysisResult || !sourceBytes || !templateBytes || !selectedQuestions.size) return;
-  elements.buildExam.disabled = true;
-  elements.buildStatus.textContent = "누름틀 값을 적용하고 # 문제 슬롯에 선택 문항과 미주를 붙여넣는 중입니다...";
-  try {
-    if (selectedQuestions.size > templateSlotCount) {
-      throw new Error(`선택 문항 ${selectedQuestions.size}개가 템플릿 문제 슬롯 ${templateSlotCount}개를 초과했습니다.`);
-    }
-    const filledTemplate = await applyTemplateFieldValues(templateBytes, fieldValuesObject());
-    const bytes = await buildExamFromTemplateHwpx(
-      sourceBytes,
-      filledTemplate,
-      analysisResult.questions,
-      [...selectedQuestions],
-    );
-    const validation = await validateGeneratedExamHwpx(bytes, {
-      expectedQuestionCount: selectedQuestions.size,
-      expectedEndnoteCount: selectedQuestions.size,
-    });
-    const verification = new HwpDocument(bytes);
-    const generatedPages = verification.pageCount();
-    verification.free?.();
-    if (!generatedPages) throw new Error("생성된 시험지에 표시할 페이지가 없습니다.");
-    const templateStem = templateFilename.replace(/\.hwpx$/i, "") || "시험지";
-    downloadBytes(bytes, `${templateStem}_선택${selectedQuestions.size}문항.hwpx`);
-    elements.buildStatus.textContent = `${selectedQuestions.size}문항 · 미주 ${validation.endnoteCount}개 · ${generatedPages}페이지 구조 검증을 통과했습니다.`;
-  } catch (error) {
-    elements.buildStatus.textContent = `시험지 생성 실패: ${error.message}`;
-  } finally {
-    updateSelection();
-  }
-});
-
-document.addEventListener("keydown", (event) => {
-  if (!analysisResult || event.altKey || event.ctrlKey || event.metaKey) return;
-  const target = event.target;
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
-  if (event.key === "ArrowLeft") {
-    event.preventDefault();
-    moveQuestion(-1);
-  }
-  if (event.key === "ArrowRight") {
-    event.preventDefault();
-    moveQuestion(1);
-  }
-});
+elements.buildExam.addEventListener("click", createExam);
 
 rhwpReady
-  .then(() => setStatus("렌더러 준비 완료. HWPX 파일을 선택하세요."))
+  .then(() => setStatus("렌더러 준비 완료. HWPX 파일을 놓거나 선택하세요."))
   .catch((error) => setStatus(`렌더러 준비 실패: ${error.message}`, "error"));

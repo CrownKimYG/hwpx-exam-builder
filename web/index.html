@@ -11,9 +11,9 @@
     <main class="shell">
       <header class="hero">
         <div>
-          <p class="eyebrow">HWPX QUESTION PREVIEW</p>
+          <p class="eyebrow">HWPX EXAM ASSEMBLER</p>
           <h1>HWPX Exam Builder</h1>
-          <p class="subtitle">문제은행을 분석하고 한글 문서의 원본 페이지 형태로 확인합니다.</p>
+          <p class="subtitle">문제 번호를 원하는 순서로 입력해 새 시험지를 만듭니다.</p>
         </div>
         <span class="privacy-badge">파일 외부 전송 없음</span>
       </header>
@@ -21,8 +21,8 @@
       <section class="upload-card" id="upload-card">
         <label class="file-drop" for="hwpx-file">
           <span class="file-icon">HWPX</span>
-          <strong>문제은행 HWPX를 선택하세요</strong>
-          <span>파일은 이 브라우저의 메모리에서만 처리됩니다.</span>
+          <strong>문제은행 HWPX를 놓거나 선택하세요</strong>
+          <span>드래그 앤 드롭 가능 · 파일은 이 브라우저의 메모리에서만 처리됩니다.</span>
           <input id="hwpx-file" type="file" accept=".hwpx,application/zip" />
         </label>
         <p class="status" id="status" aria-live="polite">렌더러를 준비하는 중입니다...</p>
@@ -40,72 +40,32 @@
           <div class="template-summary">
             <div>
               <p class="eyebrow">HWPX TEMPLATE</p>
-              <h2 id="builder-title">시험지 템플릿</h2>
-              <p>누름틀 필드명을 자동으로 읽어 시험지 생성용 입력칸을 만듭니다.</p>
+              <h2 id="builder-title">시험지 만들기</h2>
+              <p>템플릿은 선택 사항입니다. 넣지 않으면 내장된 빈 2단 템플릿을 사용합니다.</p>
             </div>
-            <label class="template-upload" for="template-file">
-              템플릿 선택
+            <label class="template-drop" id="template-drop" for="template-file">
+              <strong>템플릿 HWPX</strong>
+              <span>놓거나 선택</span>
               <input id="template-file" type="file" accept=".hwpx,application/zip" />
             </label>
           </div>
-          <p class="template-file-name" id="template-file-name">템플릿을 선택하지 않았습니다.</p>
+          <p class="template-file-name" id="template-file-name">내장 빈 2단 템플릿을 사용합니다.</p>
           <div class="template-fields hidden" id="template-fields">
             <h3>누름틀 입력값</h3>
             <p>같은 필드명이 여러 곳에 있으면 한 번 입력한 값이 모두 적용됩니다.</p>
             <div class="field-grid" id="field-grid"></div>
             <button id="download-filled-template" type="button" disabled>입력값 적용본 시험 다운로드</button>
           </div>
-          <div class="builder-actions">
-            <span><strong id="selected-count">0</strong>개 문항 선택</span>
-            <button id="select-all" type="button">전체 선택</button>
-            <button id="clear-selection" type="button">선택 해제</button>
-            <button class="primary" id="build-exam" type="button" disabled>선택 문항으로 시험지 생성</button>
+          <div class="question-order">
+            <label for="question-order">문항 번호와 순서</label>
+            <div class="question-order-row">
+              <input id="question-order" type="text" inputmode="numeric" autocomplete="off" placeholder="예: 4 1 5 6" />
+              <button id="clear-order" type="button">지우기</button>
+              <button class="primary" id="build-exam" type="button" disabled>시험지 생성</button>
+            </div>
+            <p>숫자를 띄어쓰기로 입력한 뒤 Enter를 누르면 입력한 순서 그대로 배치합니다. 현재 <strong id="selected-count">0</strong>문항</p>
           </div>
           <p class="build-status" id="build-status" aria-live="polite"></p>
-        </section>
-
-        <section class="question-card" aria-labelledby="question-card-title">
-          <header class="question-toolbar">
-            <div>
-              <p class="eyebrow">QUESTION CARD</p>
-              <h2 id="question-card-title">문항 미리보기</h2>
-              <p class="keyboard-hint">키보드 ← → 방향키로 문항을 이동할 수 있습니다.</p>
-            </div>
-            <nav class="question-controls" aria-label="문항 이동">
-              <button id="previous-question" type="button" aria-label="이전 문항">← 이전</button>
-              <span id="question-position" aria-live="polite">1 / 1</span>
-              <button id="next-question" type="button" aria-label="다음 문항">다음 →</button>
-            </nav>
-          </header>
-          <article class="question-content">
-            <div class="question-heading-row">
-              <div>
-                <span class="question-type" id="question-type">문항</span>
-                <h3 id="question-label">문항 1</h3>
-              </div>
-              <label class="question-selector">
-                <input id="question-selected" type="checkbox" />
-                시험지에 포함
-              </label>
-            </div>
-            <p class="question-text" id="question-text"></p>
-            <div class="equation-sections">
-              <section aria-labelledby="problem-equations-title">
-                <h4 id="problem-equations-title">문제 수식 <span id="problem-equation-count">0</span></h4>
-                <div class="equation-gallery" id="problem-equations"></div>
-              </section>
-              <section aria-labelledby="answer-equations-title">
-                <h4 id="answer-equations-title">정답 <span id="answer-value"></span></h4>
-                <p class="role-text" id="answer-text"></p>
-                <div class="equation-gallery" id="answer-equations"></div>
-              </section>
-              <section aria-labelledby="explanation-equations-title">
-                <h4 id="explanation-equations-title">해설 수식 <span id="explanation-equation-count">0</span></h4>
-                <p class="role-text" id="explanation-text"></p>
-                <div class="equation-gallery" id="explanation-equations"></div>
-              </section>
-            </div>
-          </article>
         </section>
 
         <section class="viewer-card" aria-labelledby="viewer-title">
