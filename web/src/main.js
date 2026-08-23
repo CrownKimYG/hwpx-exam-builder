@@ -2,9 +2,15 @@ import initRhwp, { HwpDocument } from "@rhwp/core";
 import rhwpWasmUrl from "@rhwp/core/rhwp_bg.wasm?url";
 import "./styles.css";
 import { buildExamHwpx, parseHwpx, prepareHwpxForPreview } from "./parser.js";
+import { applyTemplateFieldValues, inspectTemplateFields } from "./template-fields.js";
 
 const elements = {
   file: document.querySelector("#hwpx-file"),
+  templateFile: document.querySelector("#template-file"),
+  templateFileName: document.querySelector("#template-file-name"),
+  templateFields: document.querySelector("#template-fields"),
+  fieldGrid: document.querySelector("#field-grid"),
+  downloadFilledTemplate: document.querySelector("#download-filled-template"),
   status: document.querySelector("#status"),
   workspace: document.querySelector("#workspace"),
   total: document.querySelector("#metric-total"),
@@ -39,6 +45,12 @@ const elements = {
   explanationEquations: document.querySelector("#explanation-equations"),
 };
 
+const FIELD_LABELS = {
+  title: "시험지 제목",
+  time: "시험 시간(분)",
+  test_questions_count: "총 문항 수",
+};
+
 let measureContext = null;
 let lastMeasuredFont = "";
 globalThis.measureTextWidth = (font, text) => {
@@ -57,7 +69,12 @@ let pageCount = 0;
 let analysisResult = null;
 let sourceBytes = null;
 let currentQuestion = 0;
+let templateBytes = null;
+let templateFilename = "";
+let templateFieldDefinitions = [];
 const selectedQuestions = new Set();
+const templateFieldValues = new Map();
+const manuallyEditedFields = new Set();
 
 function setStatus(message, state = "") {
   elements.status.className = `status ${state}`.trim();
@@ -67,7 +84,6 @@ function setStatus(message, state = "") {
 function safeSvg(svgSource, label) {
   const parsed = new DOMParser().parseFromString(svgSource, "image/svg+xml");
   if (parsed.querySelector("parsererror")) throw new Error(`${label} SVG를 읽지 못했습니다.`);
-
   parsed.querySelectorAll("script, foreignObject, iframe, object, embed").forEach((node) => node.remove());
   parsed.querySelectorAll("*").forEach((node) => {
     Array.from(node.attributes).forEach((attribute) => {
@@ -79,7 +95,6 @@ function safeSvg(svgSource, label) {
       }
     });
   });
-
   const root = parsed.documentElement;
   root.setAttribute("role", "img");
   root.setAttribute("aria-label", label);
@@ -131,9 +146,48 @@ function renderEquationGroup(container, equations, label) {
     container.replaceChildren(empty);
     return;
   }
-  container.replaceChildren(...equations.map((equation, index) =>
-    equationCard(equation, `${label} ${index + 1}`)
-  ));
+  container.replaceChildren(...equations.map((equation, index) => equationCard(equation, `${label} ${index + 1}`)));
+}
+
+function fieldValuesObject() {
+  return Object.fromEntries(templateFieldValues.entries());
+}
+
+function syncQuestionCountField() {
+  if (!templateFieldDefinitions.some((field) => field.name === "test_questions_count")) return;
+  if (manuallyEditedFields.has("test_questions_count")) return;
+  const value = String(selectedQuestions.size);
+  templateFieldValues.set("test_questions_count", value);
+  const input = elements.fieldGrid.querySelector('[data-field-name="test_questions_count"]');
+  if (input) input.value = value;
+}
+
+function renderTemplateFields(fields) {
+  templateFieldDefinitions = fields;
+  templateFieldValues.clear();
+  manuallyEditedFields.clear();
+  const controls = fields.map((field) => {
+    const label = document.createElement("label");
+    label.className = "field-control";
+    const caption = document.createElement("span");
+    caption.textContent = `${FIELD_LABELS[field.name] || field.name} · ${field.count}곳`;
+    const input = document.createElement("input");
+    input.type = field.name === "time" || field.name === "test_questions_count" ? "number" : "text";
+    input.dataset.fieldName = field.name;
+    input.placeholder = field.placeholder || field.name;
+    const initialValue = field.name === "test_questions_count" ? String(selectedQuestions.size) : "";
+    input.value = initialValue;
+    templateFieldValues.set(field.name, initialValue);
+    input.addEventListener("input", () => {
+      manuallyEditedFields.add(field.name);
+      templateFieldValues.set(field.name, input.value);
+    });
+    label.append(caption, input);
+    return label;
+  });
+  elements.fieldGrid.replaceChildren(...controls);
+  elements.templateFields.classList.toggle("hidden", !fields.length);
+  elements.downloadFilledTemplate.disabled = !fields.length || !templateBytes;
 }
 
 function updateSelection() {
@@ -143,6 +197,7 @@ function updateSelection() {
   if (analysisResult?.questions[currentQuestion]) {
     elements.questionSelected.checked = selectedQuestions.has(analysisResult.questions[currentQuestion].ordinal);
   }
+  syncQuestionCountField();
 }
 
 function renderQuestion(index) {
@@ -157,8 +212,7 @@ function renderQuestion(index) {
   elements.questionText.textContent = question.questionText || "문항 본문은 원본 페이지에서 확인하세요.";
   elements.problemEquationCount.textContent = question.equations.problem.length;
   elements.answerValue.textContent = question.answerType === "multiple_choice" && question.answer
-    ? `${["", "①", "②", "③", "④", "⑤"][question.answer] || question.answer}`
-    : "";
+    ? `${["", "①", "②", "③", "④", "⑤"][question.answer] || question.answer}` : "";
   elements.answerText.textContent = question.answerText || (question.answer ? String(question.answer) : "정답 정보 없음");
   elements.explanationEquationCount.textContent = question.equations.explanation.length;
   elements.explanationText.textContent = question.explanationText || "해설 텍스트 없음";
@@ -188,19 +242,13 @@ elements.file.addEventListener("change", async (event) => {
   setStatus("HWPX 문항을 분석하고 원본 페이지를 구성하는 중입니다...", "loading");
   elements.workspace.classList.add("hidden");
   elements.pageCanvas.replaceChildren();
-
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const [analysis, previewBytes] = await Promise.all([
-      parseHwpx(file),
-      prepareHwpxForPreview(bytes),
-      rhwpReady,
-    ]);
+    const [analysis, previewBytes] = await Promise.all([parseHwpx(file), prepareHwpxForPreview(bytes), rhwpReady]);
     documentViewer?.free?.();
     documentViewer = new HwpDocument(previewBytes);
     pageCount = documentViewer.pageCount();
     if (!pageCount) throw new Error("렌더링할 페이지를 찾지 못했습니다.");
-
     const multiple = analysis.questions.filter((question) => question.answerType === "multiple_choice").length;
     const short = analysis.questions.filter((question) => question.answerType === "short_answer").length;
     elements.total.textContent = analysis.questions.length;
@@ -214,7 +262,7 @@ elements.file.addEventListener("change", async (event) => {
     elements.workspace.classList.remove("hidden");
     renderPage(0);
     renderQuestion(0);
-    elements.buildStatus.textContent = "문항을 선택하면 기본 2단 템플릿으로 시험지를 만들 수 있습니다.";
+    elements.buildStatus.textContent = "문항을 선택하고 시험지 템플릿을 지정하세요.";
     setStatus(`${file.name} · ${analysis.questions.length}문항 · ${pageCount}페이지 준비 완료`, "success");
   } catch (error) {
     documentViewer?.free?.();
@@ -223,6 +271,41 @@ elements.file.addEventListener("change", async (event) => {
     sourceBytes = null;
     pageCount = 0;
     setStatus(`분석 실패: ${error.message}`, "error");
+  }
+});
+
+elements.templateFile.addEventListener("change", async (event) => {
+  const [file] = event.target.files;
+  if (!file) return;
+  try {
+    templateBytes = new Uint8Array(await file.arrayBuffer());
+    templateFilename = file.name;
+    const fields = await inspectTemplateFields(templateBytes);
+    renderTemplateFields(fields);
+    elements.templateFileName.textContent = `${file.name} · 누름틀 ${fields.reduce((sum, field) => sum + field.count, 0)}곳 · 필드 ${fields.length}종`;
+    elements.buildStatus.textContent = fields.length
+      ? `누름틀 ${fields.map((field) => field.name).join(", ")}를 찾았습니다.`
+      : "누름틀(CLICK_HERE) 필드를 찾지 못했습니다.";
+  } catch (error) {
+    templateBytes = null;
+    templateFilename = "";
+    renderTemplateFields([]);
+    elements.templateFileName.textContent = `템플릿 분석 실패: ${error.message}`;
+  }
+});
+
+elements.downloadFilledTemplate.addEventListener("click", async () => {
+  if (!templateBytes) return;
+  elements.downloadFilledTemplate.disabled = true;
+  try {
+    const bytes = await applyTemplateFieldValues(templateBytes, fieldValuesObject());
+    const stem = templateFilename.replace(/\.hwpx$/i, "");
+    downloadBytes(bytes, `${stem}_누름틀입력.hwpx`);
+    elements.buildStatus.textContent = "입력값을 실제 누름틀에 적용한 검증용 HWPX를 다운로드했습니다.";
+  } catch (error) {
+    elements.buildStatus.textContent = `누름틀 입력 실패: ${error.message}`;
+  } finally {
+    elements.downloadFilledTemplate.disabled = !templateBytes || !templateFieldDefinitions.length;
   }
 });
 
@@ -248,9 +331,10 @@ elements.clearSelection.addEventListener("click", () => {
 elements.buildExam.addEventListener("click", async () => {
   if (!analysisResult || !sourceBytes || !selectedQuestions.size) return;
   elements.buildExam.disabled = true;
-  elements.buildStatus.textContent = "선택 문항을 기본 시험지 템플릿에 배치하는 중입니다...";
+  elements.buildStatus.textContent = "선택 문항을 시험지로 배치하는 중입니다...";
   try {
-    const bytes = await buildExamHwpx(sourceBytes, analysisResult.questions, [...selectedQuestions]);
+    let bytes = await buildExamHwpx(sourceBytes, analysisResult.questions, [...selectedQuestions]);
+    bytes = await applyTemplateFieldValues(bytes, fieldValuesObject());
     const verification = new HwpDocument(bytes);
     const generatedPages = verification.pageCount();
     verification.free?.();
