@@ -32,3 +32,22 @@ jobs:
           runtime: node@24
           cache: true
       - run: pnpm build
+
+  live-pages-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for nested-slot v2 deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 36); do
+            version="$(curl -fsSL --max-time 15 https://crownkimyg.github.io/hwpx-exam-builder/deploy-version.txt || true)"
+            if grep -qx 'template-slots-v2' <<<"$version"; then
+              echo "Live GitHub Pages contains template-slots-v2."
+              exit 0
+            fi
+            echo "Live v2 marker not visible yet (attempt ${attempt}/36)."
+            sleep 5
+          done
+          echo "Expected v2 deployment marker was not found on GitHub Pages." >&2
+          exit 1
