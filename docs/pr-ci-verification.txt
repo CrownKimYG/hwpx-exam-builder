@@ -1,0 +1,1 @@
+Verify pull-request CI with the current template slot builder code.
