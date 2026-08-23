@@ -1,0 +1,1 @@
+This file verifies pull-request CI for the template slot builder.
