@@ -18,11 +18,17 @@ function textOf(element) {
   return descendants(element, "t").map((node) => node.textContent || "").join("").trim();
 }
 
-function topLevelSlot(root, child) {
-  if (localName(child) !== "p") return null;
-  const match = textOf(child).match(SLOT_RE);
+function paragraphSlot(paragraph) {
+  if (localName(paragraph) !== "p") return null;
+  const match = textOf(paragraph).match(SLOT_RE);
   if (!match) return null;
-  return { number: Number(match[1]), element: child };
+  return { number: Number(match[1]), element: paragraph };
+}
+
+function findSlots(root) {
+  return descendants(root, "p")
+    .map((paragraph) => paragraphSlot(paragraph))
+    .filter(Boolean);
 }
 
 export async function inspectTemplateSlots(data) {
@@ -31,9 +37,8 @@ export async function inspectTemplateSlots(data) {
   const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort();
   for (const sectionName of sectionNames) {
     const documentNode = parseXml(await zip.file(sectionName).async("string"), sectionName);
-    Array.from(documentNode.documentElement.children).forEach((child) => {
-      const slot = topLevelSlot(documentNode.documentElement, child);
-      if (slot) slots.push({ sectionName, number: slot.number });
+    findSlots(documentNode.documentElement).forEach((slot) => {
+      slots.push({ sectionName, number: slot.number });
     });
   }
   return slots.sort((left, right) => left.number - right.number);
@@ -353,9 +358,8 @@ export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, ques
   for (const sectionName of templateSectionNames) {
     const documentNode = parseXml(await templateZip.file(sectionName).async("string"), sectionName);
     remapReferences(documentNode.documentElement, maps, fontMaps, binaryMap);
-    Array.from(documentNode.documentElement.children).forEach((child) => {
-      const slot = topLevelSlot(documentNode.documentElement, child);
-      if (slot) slotRecords.push({ sectionName, number: slot.number, element: child, documentNode });
+    findSlots(documentNode.documentElement).forEach((slot) => {
+      slotRecords.push({ sectionName, number: slot.number, element: slot.element, documentNode });
     });
     templateSections.set(sectionName, documentNode);
   }
