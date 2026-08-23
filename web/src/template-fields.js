@@ -4,6 +4,7 @@ const FIELD_TYPE = "CLICK_HERE";
 
 const localName = (node) => node.localName || node.nodeName.split(":").pop();
 const descendants = (element, name) => Array.from(element.getElementsByTagNameNS("*", name));
+const allDescendants = (element) => Array.from(element.getElementsByTagNameNS("*", "*"));
 
 function parseXml(xml, label) {
   const documentNode = new DOMParser().parseFromString(xml, "application/xml");
@@ -12,18 +13,60 @@ function parseXml(xml, label) {
   return documentNode;
 }
 
-function fieldTextFromParagraph(paragraph, beginNode) {
+function closestNamedAncestor(node, name) {
+  let current = node?.parentElement;
+  while (current && localName(current) !== name) current = current.parentElement;
+  return current;
+}
+
+function fieldRange(paragraph, beginNode) {
   const beginId = beginNode.getAttribute("id");
-  let active = false;
-  const pieces = [];
-  for (const run of descendants(paragraph, "run")) {
-    const begin = descendants(run, "fieldBegin").find((node) => node === beginNode);
-    if (begin) active = true;
-    if (active) descendants(run, "t").forEach((node) => pieces.push(node.textContent || ""));
-    const end = descendants(run, "fieldEnd").find((node) => !beginId || node.getAttribute("beginIDRef") === beginId);
-    if (active && end) break;
-  }
-  return pieces.join("").trim();
+  const ordered = allDescendants(paragraph);
+  const beginIndex = ordered.indexOf(beginNode);
+  const endIndex = ordered.findIndex((node, index) => (
+    index > beginIndex
+    && localName(node) === "fieldEnd"
+    && (!beginId || node.getAttribute("beginIDRef") === beginId)
+  ));
+  const between = beginIndex >= 0 && endIndex > beginIndex
+    ? ordered.slice(beginIndex + 1, endIndex)
+    : [];
+  const previousTextNode = beginIndex > 0
+    ? ordered.slice(0, beginIndex).reverse().find((node) => localName(node) === "t") || null
+    : null;
+  return {
+    endNode: endIndex >= 0 ? ordered[endIndex] : null,
+    previousTextNode,
+    textNodes: between.filter((node) => localName(node) === "t"),
+  };
+}
+
+function fieldTextFromParagraph(paragraph, beginNode) {
+  const { textNodes } = fieldRange(paragraph, beginNode);
+  const visible = textNodes.map((node) => node.textContent || "").join("").trim();
+  if (visible) return visible;
+  const direction = descendants(beginNode, "stringParam")
+    .find((node) => node.getAttribute("name") === "Direction");
+  return (direction?.textContent || "").trim();
+}
+
+function ensureFieldTextNode(paragraph, beginNode, endNode) {
+  const beginRun = closestNamedAncestor(beginNode, "run");
+  const endRun = closestNamedAncestor(endNode, "run");
+  if (!beginRun || !endRun || beginRun.parentNode !== endRun.parentNode) return null;
+  const run = beginRun.cloneNode(false);
+  const prefix = beginRun.prefix || "hp";
+  const text = paragraph.ownerDocument.createElementNS(beginRun.namespaceURI, `${prefix}:t`);
+  run.appendChild(text);
+  endRun.parentNode.insertBefore(run, endRun);
+  return text;
+}
+
+function flattenField(beginNode, endNode) {
+  const beginControl = closestNamedAncestor(beginNode, "ctrl");
+  const endControl = closestNamedAncestor(endNode, "ctrl");
+  beginControl?.remove();
+  if (endControl && endControl !== beginControl) endControl.remove();
 }
 
 export async function inspectTemplateFields(data) {
@@ -51,36 +94,25 @@ export async function inspectTemplateFields(data) {
 }
 
 function applyFieldsInParagraph(paragraph, values) {
-  let active = null;
-  let written = false;
-
-  for (const run of descendants(paragraph, "run")) {
-    const begin = descendants(run, "fieldBegin").find((node) => node.getAttribute("type") === FIELD_TYPE);
-    if (begin) {
-      const name = (begin.getAttribute("name") || "").trim();
-      active = Object.prototype.hasOwnProperty.call(values, name)
-        ? { id: begin.getAttribute("id"), value: String(values[name] ?? "") }
-        : null;
-      written = false;
-    }
-
-    if (active) {
-      for (const text of descendants(run, "t")) {
-        if (!written) {
-          text.textContent = active.value;
-          written = true;
-        } else {
-          text.textContent = "";
-        }
-      }
-    }
-
-    const ends = descendants(run, "fieldEnd");
-    if (active && ends.some((node) => !active.id || node.getAttribute("beginIDRef") === active.id)) {
-      active = null;
-      written = false;
-    }
-  }
+  descendants(paragraph, "fieldBegin")
+    .filter((node) => node.getAttribute("type") === FIELD_TYPE)
+    .forEach((beginNode) => {
+      const name = (beginNode.getAttribute("name") || "").trim();
+      if (!Object.prototype.hasOwnProperty.call(values, name)) return;
+      const value = String(values[name] ?? "");
+      const range = fieldRange(paragraph, beginNode);
+      const existingText = range.textNodes.find((text) => (text.textContent || "").trim());
+      const firstText = existingText
+        || ((range.previousTextNode?.textContent || "").trim() ? range.previousTextNode : null)
+        || range.textNodes[0]
+        || ensureFieldTextNode(paragraph, beginNode, range.endNode);
+      if (!firstText) throw new Error(`${name} 누름틀의 입력 영역을 찾지 못했습니다.`);
+      firstText.textContent = value;
+      range.textNodes.forEach((text) => {
+        if (text !== firstText) text.textContent = "";
+      });
+      flattenField(beginNode, range.endNode);
+    });
 }
 
 async function repackHwpx(zip, overrides) {

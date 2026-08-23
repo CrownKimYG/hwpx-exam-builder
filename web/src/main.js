@@ -3,7 +3,11 @@ import rhwpWasmUrl from "@rhwp/core/rhwp_bg.wasm?url";
 import "./styles.css";
 import { parseHwpx, prepareHwpxForPreview } from "./parser.js";
 import { applyTemplateFieldValues, inspectTemplateFields } from "./template-fields.js";
-import { buildExamFromTemplateHwpx, inspectTemplateSlots } from "./template-builder.js";
+import {
+  buildExamFromTemplateHwpx,
+  inspectTemplateSlots,
+  validateGeneratedExamHwpx,
+} from "./template-builder.js";
 
 const elements = {
   file: document.querySelector("#hwpx-file"),
@@ -50,7 +54,9 @@ const FIELD_LABELS = {
   title: "시험지 제목",
   time: "시험 시간(분)",
   test_questions_count: "총 문항 수",
+  quest_count: "총 문항 수",
 };
+const QUESTION_COUNT_FIELDS = new Set(["test_questions_count", "quest_count"]);
 
 let measureContext = null;
 let lastMeasuredFont = "";
@@ -156,12 +162,15 @@ function fieldValuesObject() {
 }
 
 function syncQuestionCountField() {
-  if (!templateFieldDefinitions.some((field) => field.name === "test_questions_count")) return;
-  if (manuallyEditedFields.has("test_questions_count")) return;
   const value = String(selectedQuestions.size);
-  templateFieldValues.set("test_questions_count", value);
-  const input = elements.fieldGrid.querySelector('[data-field-name="test_questions_count"]');
-  if (input) input.value = value;
+  templateFieldDefinitions
+    .filter((field) => QUESTION_COUNT_FIELDS.has(field.name))
+    .forEach((field) => {
+      if (manuallyEditedFields.has(field.name)) return;
+      templateFieldValues.set(field.name, value);
+      const input = elements.fieldGrid.querySelector(`[data-field-name="${field.name}"]`);
+      if (input) input.value = value;
+    });
 }
 
 function renderTemplateFields(fields) {
@@ -174,10 +183,13 @@ function renderTemplateFields(fields) {
     const caption = document.createElement("span");
     caption.textContent = `${FIELD_LABELS[field.name] || field.name} · ${field.count}곳`;
     const input = document.createElement("input");
-    input.type = field.name === "time" || field.name === "test_questions_count" ? "number" : "text";
+    input.type = field.name === "time" || QUESTION_COUNT_FIELDS.has(field.name) ? "number" : "text";
     input.dataset.fieldName = field.name;
     input.placeholder = field.placeholder || field.name;
-    const initialValue = field.name === "test_questions_count" ? String(selectedQuestions.size) : "";
+    const preservedValue = /\{\{[^{}]+\}\}/.test(field.placeholder || "") ? "" : field.placeholder || "";
+    const initialValue = QUESTION_COUNT_FIELDS.has(field.name)
+      ? String(selectedQuestions.size)
+      : preservedValue;
     input.value = initialValue;
     templateFieldValues.set(field.name, initialValue);
     input.addEventListener("input", () => {
@@ -358,13 +370,17 @@ elements.buildExam.addEventListener("click", async () => {
       analysisResult.questions,
       [...selectedQuestions],
     );
+    const validation = await validateGeneratedExamHwpx(bytes, {
+      expectedQuestionCount: selectedQuestions.size,
+      expectedEndnoteCount: selectedQuestions.size,
+    });
     const verification = new HwpDocument(bytes);
     const generatedPages = verification.pageCount();
     verification.free?.();
     if (!generatedPages) throw new Error("생성된 시험지에 표시할 페이지가 없습니다.");
     const templateStem = templateFilename.replace(/\.hwpx$/i, "") || "시험지";
     downloadBytes(bytes, `${templateStem}_선택${selectedQuestions.size}문항.hwpx`);
-    elements.buildStatus.textContent = `${selectedQuestions.size}문항을 #1~#${selectedQuestions.size}에 왼쪽 정렬로 삽입하고 미주를 유지했습니다. · ${generatedPages}페이지`;
+    elements.buildStatus.textContent = `${selectedQuestions.size}문항 · 미주 ${validation.endnoteCount}개 · ${generatedPages}페이지 구조 검증을 통과했습니다.`;
   } catch (error) {
     elements.buildStatus.textContent = `시험지 생성 실패: ${error.message}`;
   } finally {

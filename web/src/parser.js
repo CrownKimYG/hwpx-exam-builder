@@ -237,18 +237,44 @@ export async function parseHwpx(file) {
     const anchors = children
       .map((child, index) => ({ index, child, note: firstDescendant(child, "endNote") }))
       .filter((item) => item.note);
-    const metadata = anchors.map(({ index }) => {
-      for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
+    const metadata = anchors.map(({ index }, position) => {
+      const lowerBound = position > 0 ? anchors[position - 1].index + 1 : 0;
+      for (let candidate = index - 1; candidate >= lowerBound; candidate -= 1) {
         const match = plainText(children[candidate], { skipNotes: true }).match(TITLE_RE);
-        if (match) return { start: candidate, label: match[0].trim(), type: match[1], number: Number(match[2]) };
+        if (match) {
+          return {
+            start: candidate,
+            contentStart: candidate + 1,
+            hasTitle: true,
+            label: match[0].trim(),
+            type: match[1],
+            number: Number(match[2]),
+          };
+        }
       }
-      return { start: index, label: `문항 ${questions.length + 1}`, type: "미분류", number: 0 };
+      return {
+        start: index,
+        contentStart: index,
+        hasTitle: false,
+        label: `문항 ${questions.length + position + 1}`,
+        type: "미분류",
+        number: 0,
+      };
     });
 
     for (let position = 0; position < anchors.length; position += 1) {
       const { index: anchorIndex, child: anchor, note } = anchors[position];
       const meta = metadata[position];
-      const end = position + 1 < metadata.length ? metadata[position + 1].start : children.length;
+      let end = position + 1 < metadata.length ? metadata[position + 1].start : children.length;
+      if (position + 1 === metadata.length) {
+        const trailingBoundary = children.findIndex((child, childIndex) => {
+          if (childIndex <= anchorIndex) return false;
+          if (child.getAttribute("pageBreak") === "1") return true;
+          return Boolean(firstDescendant(child, "secPr"));
+        });
+        if (trailingBoundary >= 0) end = trailingBoundary;
+      }
+      const contentStart = Math.min(meta.contentStart, end);
       const block = children.slice(meta.start, end);
       const bodyElements = block.map(withoutEndnotes);
       const noteParagraphs = descendants(note, "p");
@@ -269,8 +295,8 @@ export async function parseHwpx(file) {
       const fullXml = formatXml(
         `<questionBlock ordinal="${questions.length + 1}" sourceLabel="${meta.label}" answerType="${answerType}" answerValue="${answer ?? ""}">${bodyXml}${answerXml}${explanationXml}</questionBlock>`
       );
-      const questionElements = block
-        .slice(1)
+      const questionElements = children
+        .slice(contentStart, end)
         .filter((element) => !CHOICE_PARAGRAPH_IDS.has(element.getAttribute("paraPrIDRef")))
         .map(withoutEndnotes)
         .filter((element) => plainText(element).trim());
@@ -284,8 +310,13 @@ export async function parseHwpx(file) {
         sourceType: meta.type,
         sourceNumber: meta.number,
         sectionName,
+        anchorIndex,
+        titleStart: meta.hasTitle ? meta.start : null,
         blockStart: meta.start,
         blockEnd: end,
+        contentStart,
+        contentEnd: end,
+        hasEndnote: true,
         answerType,
         answer,
         choiceCount: choiceRefs.length,
