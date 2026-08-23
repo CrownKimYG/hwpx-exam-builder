@@ -1,8 +1,9 @@
 import initRhwp, { HwpDocument } from "@rhwp/core";
 import rhwpWasmUrl from "@rhwp/core/rhwp_bg.wasm?url";
 import "./styles.css";
-import { buildExamHwpx, parseHwpx, prepareHwpxForPreview } from "./parser.js";
+import { parseHwpx, prepareHwpxForPreview } from "./parser.js";
 import { applyTemplateFieldValues, inspectTemplateFields } from "./template-fields.js";
+import { buildExamFromTemplateHwpx, inspectTemplateSlots } from "./template-builder.js";
 
 const elements = {
   file: document.querySelector("#hwpx-file"),
@@ -72,6 +73,7 @@ let currentQuestion = 0;
 let templateBytes = null;
 let templateFilename = "";
 let templateFieldDefinitions = [];
+let templateSlotCount = 0;
 const selectedQuestions = new Set();
 const templateFieldValues = new Map();
 const manuallyEditedFields = new Set();
@@ -193,11 +195,15 @@ function renderTemplateFields(fields) {
 function updateSelection() {
   const count = selectedQuestions.size;
   elements.selectedCount.textContent = count;
-  elements.buildExam.disabled = count === 0 || !analysisResult;
+  const exceedsSlots = templateBytes && templateSlotCount > 0 && count > templateSlotCount;
+  elements.buildExam.disabled = count === 0 || !analysisResult || !templateBytes || templateSlotCount === 0 || exceedsSlots;
   if (analysisResult?.questions[currentQuestion]) {
     elements.questionSelected.checked = selectedQuestions.has(analysisResult.questions[currentQuestion].ordinal);
   }
   syncQuestionCountField();
+  if (exceedsSlots) {
+    elements.buildStatus.textContent = `선택 문항 ${count}개가 템플릿 문제 슬롯 ${templateSlotCount}개를 초과했습니다.`;
+  }
 }
 
 function renderQuestion(index) {
@@ -262,7 +268,9 @@ elements.file.addEventListener("change", async (event) => {
     elements.workspace.classList.remove("hidden");
     renderPage(0);
     renderQuestion(0);
-    elements.buildStatus.textContent = "문항을 선택하고 시험지 템플릿을 지정하세요.";
+    elements.buildStatus.textContent = templateBytes
+      ? `템플릿 문제 슬롯 ${templateSlotCount}개가 준비됐습니다.`
+      : "문항을 선택하고 시험지 템플릿을 지정하세요.";
     setStatus(`${file.name} · ${analysis.questions.length}문항 · ${pageCount}페이지 준비 완료`, "success");
   } catch (error) {
     documentViewer?.free?.();
@@ -280,17 +288,24 @@ elements.templateFile.addEventListener("change", async (event) => {
   try {
     templateBytes = new Uint8Array(await file.arrayBuffer());
     templateFilename = file.name;
-    const fields = await inspectTemplateFields(templateBytes);
+    const [fields, slots] = await Promise.all([
+      inspectTemplateFields(templateBytes),
+      inspectTemplateSlots(templateBytes),
+    ]);
+    templateSlotCount = slots.length;
     renderTemplateFields(fields);
-    elements.templateFileName.textContent = `${file.name} · 누름틀 ${fields.reduce((sum, field) => sum + field.count, 0)}곳 · 필드 ${fields.length}종`;
-    elements.buildStatus.textContent = fields.length
-      ? `누름틀 ${fields.map((field) => field.name).join(", ")}를 찾았습니다.`
-      : "누름틀(CLICK_HERE) 필드를 찾지 못했습니다.";
+    elements.templateFileName.textContent = `${file.name} · 문제 슬롯 ${templateSlotCount}개 · 누름틀 ${fields.reduce((sum, field) => sum + field.count, 0)}곳 · 필드 ${fields.length}종`;
+    elements.buildStatus.textContent = templateSlotCount
+      ? `#1~#${templateSlotCount} 문제 슬롯과 누름틀 ${fields.map((field) => field.name).join(", ") || "없음"}을 찾았습니다.`
+      : "#1, #2 형식의 문제 슬롯을 찾지 못했습니다.";
+    updateSelection();
   } catch (error) {
     templateBytes = null;
     templateFilename = "";
+    templateSlotCount = 0;
     renderTemplateFields([]);
     elements.templateFileName.textContent = `템플릿 분석 실패: ${error.message}`;
+    updateSelection();
   }
 });
 
@@ -329,19 +344,27 @@ elements.clearSelection.addEventListener("click", () => {
   updateSelection();
 });
 elements.buildExam.addEventListener("click", async () => {
-  if (!analysisResult || !sourceBytes || !selectedQuestions.size) return;
+  if (!analysisResult || !sourceBytes || !templateBytes || !selectedQuestions.size) return;
   elements.buildExam.disabled = true;
-  elements.buildStatus.textContent = "선택 문항을 시험지로 배치하는 중입니다...";
+  elements.buildStatus.textContent = "누름틀 값을 적용하고 # 문제 슬롯에 선택 문항과 미주를 붙여넣는 중입니다...";
   try {
-    let bytes = await buildExamHwpx(sourceBytes, analysisResult.questions, [...selectedQuestions]);
-    bytes = await applyTemplateFieldValues(bytes, fieldValuesObject());
+    if (selectedQuestions.size > templateSlotCount) {
+      throw new Error(`선택 문항 ${selectedQuestions.size}개가 템플릿 문제 슬롯 ${templateSlotCount}개를 초과했습니다.`);
+    }
+    const filledTemplate = await applyTemplateFieldValues(templateBytes, fieldValuesObject());
+    const bytes = await buildExamFromTemplateHwpx(
+      sourceBytes,
+      filledTemplate,
+      analysisResult.questions,
+      [...selectedQuestions],
+    );
     const verification = new HwpDocument(bytes);
     const generatedPages = verification.pageCount();
     verification.free?.();
     if (!generatedPages) throw new Error("생성된 시험지에 표시할 페이지가 없습니다.");
-    const stem = analysisResult.filename.replace(/\.hwpx$/i, "");
-    downloadBytes(bytes, `${stem}_선택${selectedQuestions.size}문항_시험지.hwpx`);
-    elements.buildStatus.textContent = `${selectedQuestions.size}문항 · ${generatedPages}페이지 시험지를 다운로드했습니다.`;
+    const templateStem = templateFilename.replace(/\.hwpx$/i, "") || "시험지";
+    downloadBytes(bytes, `${templateStem}_선택${selectedQuestions.size}문항.hwpx`);
+    elements.buildStatus.textContent = `${selectedQuestions.size}문항을 #1~#${selectedQuestions.size}에 왼쪽 정렬로 삽입하고 미주를 유지했습니다. · ${generatedPages}페이지`;
   } catch (error) {
     elements.buildStatus.textContent = `시험지 생성 실패: ${error.message}`;
   } finally {
