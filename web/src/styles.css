@@ -62,6 +62,12 @@ h1 { margin: 0; font-family: Georgia, "Noto Serif KR", serif; font-size: clamp(3
 .question-order-row .primary:hover:not(:disabled) { background: #0f5e56; color: white; }
 .question-order > p { margin: 9px 1px 0; color: #607178; font-size: 13px; }
 .question-order > p strong { color: #176960; }
+.endnote-option { display: inline-flex; align-items: flex-start; gap: 9px; margin-top: 14px; padding: 10px 12px; border: 1px solid #d4dfe1; border-radius: 10px; background: #f8fbfa; color: #29434a; cursor: pointer; }
+.endnote-option:has(input:checked) { border-color: #7caea8; background: #edf8f6; }
+.endnote-option input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: #176960; }
+.endnote-option span { display: grid; gap: 2px; }
+.endnote-option strong { font-size: 13px; }
+.endnote-option small { color: #66777d; font-size: 12px; }
 .build-status { min-height: 20px; margin: 12px 0 0; color: #5b6d74; font-size: 13px; }
 .viewer-card { margin-top: 18px; overflow: hidden; }
 .viewer-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 22px 26px; border-bottom: 1px solid #dce3e6; }

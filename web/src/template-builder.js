@@ -3,6 +3,7 @@ import JSZip from "jszip";
 const SECTION_RE = /^Contents\/section\d+\.xml$/;
 const SLOT_RE = /^#(\d+)$/;
 const SEQUENTIAL_MARKER = "{{QUESTIONS}}";
+const EXPLANATION_MARKER = "#해설";
 
 const localName = (node) => node.localName || node.nodeName.split(":").pop();
 const descendants = (element, name) => Array.from(element.getElementsByTagNameNS("*", name));
@@ -42,6 +43,10 @@ function findSequentialMarkers(root) {
   return descendants(root, "p").filter((paragraph) => textOf(paragraph) === SEQUENTIAL_MARKER);
 }
 
+function findExplanationMarkers(root) {
+  return descendants(root, "p").filter((paragraph) => textOf(paragraph) === EXPLANATION_MARKER);
+}
+
 function canonicalSlots(records) {
   const byNumber = new Map();
   records.forEach((record) => {
@@ -59,7 +64,7 @@ function trimAfterLastPageMarker(documentNode) {
   ));
   if (markerIndex < 0) return 0;
   const trailing = children.slice(markerIndex + 1);
-  if (trailing.some((child) => findSlots(child).length)) return 0;
+  if (trailing.some((child) => findSlots(child).length || findExplanationMarkers(child).length)) return 0;
   trailing.forEach((child) => child.remove());
   return trailing.length;
 }
@@ -75,6 +80,16 @@ export async function inspectTemplateSlots(data) {
     });
   }
   return canonicalSlots(slots);
+}
+
+export async function inspectTemplateExplanationMarker(data) {
+  const zip = await JSZip.loadAsync(data, { checkCRC32: true });
+  const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort();
+  for (const sectionName of sectionNames) {
+    const documentNode = parseXml(await zip.file(sectionName).async("string"), sectionName);
+    if (findExplanationMarkers(documentNode.documentElement).length) return true;
+  }
+  return false;
 }
 
 const COLLECTIONS = [
@@ -355,6 +370,43 @@ function clearSlotMarker(paragraph) {
   descendants(paragraph, "t").forEach((node) => { node.textContent = ""; });
 }
 
+function replaceParagraphText(paragraph, value) {
+  const textNodes = descendants(paragraph, "t");
+  textNodes.forEach((node, index) => { node.textContent = index === 0 ? value : ""; });
+}
+
+function ensureHiddenEndnoteStyle(headerDocument) {
+  const charProperties = findRefContainer(headerDocument, "charProperties");
+  if (!charProperties) throw new Error("미주 숨김용 글자 서식을 추가할 charProperties를 찾지 못했습니다.");
+  const styles = directChildrenByName(charProperties, "charPr");
+  const existing = styles.find((style) => (
+    style.getAttribute("height") === "100"
+    && (style.getAttribute("textColor") || "").toUpperCase() === "#FFFFFF"
+  ));
+  if (existing) return existing.getAttribute("id");
+  if (!styles.length) throw new Error("미주 숨김용 기준 글자 서식을 찾지 못했습니다.");
+  const clone = headerDocument.importNode(styles[0], true);
+  clone.setAttribute("id", String(nextNumericId(styles)));
+  clone.setAttribute("height", "100");
+  clone.setAttribute("textColor", "#FFFFFF");
+  charProperties.appendChild(clone);
+  charProperties.setAttribute("itemCnt", String(styles.length + 1));
+  return clone.getAttribute("id");
+}
+
+function hideEndnoteFormatting(headerDocument, sectionDocuments) {
+  const hiddenStyleId = ensureHiddenEndnoteStyle(headerDocument);
+  sectionDocuments.forEach((documentNode) => {
+    descendants(documentNode.documentElement, "endNote").forEach((note) => {
+      descendants(note, "run").forEach((run) => run.setAttribute("charPrIDRef", hiddenStyleId));
+      descendants(note, "equation").forEach((equation) => {
+        equation.setAttribute("baseUnit", "100");
+        equation.setAttribute("textColor", "#FFFFFF");
+      });
+    });
+  });
+}
+
 function pruneUnusedBinaryItems(contentDocument, roots) {
   const usedIds = new Set();
   roots.forEach((root) => {
@@ -407,7 +459,11 @@ async function createOutputZip(sourceZip, overrides, additions, sectionNames, ke
 
 export async function validateGeneratedExamHwpx(
   data,
-  { expectedQuestionCount = 0, expectedEndnoteCount = expectedQuestionCount } = {},
+  {
+    expectedQuestionCount = 0,
+    expectedEndnoteCount = expectedQuestionCount,
+    expectHiddenEndnotes = false,
+  } = {},
 ) {
   const zip = await JSZip.loadAsync(data, { checkCRC32: true });
   const errors = [];
@@ -430,12 +486,21 @@ export async function validateGeneratedExamHwpx(
   if (remainingSequentialMarkers.length) {
     errors.push(`치환되지 않은 연속 문제 삽입 지점이 ${remainingSequentialMarkers.length}개 남았습니다.`);
   }
+  const remainingExplanationMarkers = sectionDocuments.flatMap((documentNode) => (
+    findExplanationMarkers(documentNode.documentElement)
+  ));
+  if (remainingExplanationMarkers.length) {
+    errors.push(`치환되지 않은 #해설 표식이 ${remainingExplanationMarkers.length}개 남았습니다.`);
+  }
   sectionDocuments.forEach((documentNode) => {
     const children = Array.from(documentNode.documentElement.children);
     const markerIndex = children.findIndex((child) => (
       textOf(child).replace(/\s+/g, "").includes("마지막페이지입니다")
     ));
-    if (markerIndex >= 0 && markerIndex + 1 < children.length) {
+    const explanationIndex = children.findIndex((child, index) => (
+      index > markerIndex && textOf(child) === "해설"
+    ));
+    if (markerIndex >= 0 && markerIndex + 1 < children.length && explanationIndex < 0) {
       errors.push(`마지막 페이지 표시 뒤에 문단 ${children.length - markerIndex - 1}개가 남았습니다.`);
     }
   });
@@ -475,6 +540,25 @@ export async function validateGeneratedExamHwpx(
   } else {
     const contentDocument = parseXml(await contentEntry.async("string"), "Contents/content.hpf");
     const headerDocument = parseXml(await headerEntry.async("string"), "Contents/header.xml");
+    if (expectHiddenEndnotes) {
+      const styles = new Map(
+        directChildrenByName(findRefContainer(headerDocument, "charProperties"), "charPr")
+          .map((style) => [style.getAttribute("id"), style]),
+      );
+      const visibleRuns = endnotes.flatMap((note) => descendants(note, "run")).filter((run) => {
+        const style = styles.get(run.getAttribute("charPrIDRef"));
+        return !style
+          || style.getAttribute("height") !== "100"
+          || (style.getAttribute("textColor") || "").toUpperCase() !== "#FFFFFF";
+      });
+      const visibleEquations = endnotes.flatMap((note) => descendants(note, "equation")).filter((equation) => (
+        equation.getAttribute("baseUnit") !== "100"
+        || (equation.getAttribute("textColor") || "").toUpperCase() !== "#FFFFFF"
+      ));
+      if (visibleRuns.length || visibleEquations.length) {
+        errors.push("미주 숨김 서식(1pt·흰색)이 일부 미주 내용에 적용되지 않았습니다.");
+      }
+    }
     const manifest = firstDescendant(contentDocument.documentElement, "manifest");
     const binaryItems = new Map(
       directChildrenByName(manifest, "item")
@@ -505,7 +589,13 @@ export async function validateGeneratedExamHwpx(
   };
 }
 
-export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, questions, selectedOrdinals) {
+export async function buildExamFromTemplateHwpx(
+  sourceBytes,
+  templateBytes,
+  questions,
+  selectedOrdinals,
+  { hideEndnotes = false } = {},
+) {
   if (!selectedOrdinals.length) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
   const sourceZip = await JSZip.loadAsync(sourceBytes, { checkCRC32: true });
   const templateZip = await JSZip.loadAsync(templateBytes, { checkCRC32: true });
@@ -544,6 +634,7 @@ export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, ques
   }
   const allSlotRecords = [];
   const sequentialRecords = [];
+  const explanationRecords = [];
   const templateSections = new Map();
   for (const sectionName of templateSectionNames) {
     const documentNode = parseXml(await templateZip.file(sectionName).async("string"), sectionName);
@@ -555,6 +646,9 @@ export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, ques
     findSequentialMarkers(documentNode.documentElement).forEach((element) => {
       sequentialRecords.push({ sectionName, element, documentNode });
     });
+    findExplanationMarkers(documentNode.documentElement).forEach((element) => {
+      explanationRecords.push({ sectionName, element, documentNode });
+    });
     templateSections.set(sectionName, documentNode);
   }
   const slotRecords = canonicalSlots(allSlotRecords);
@@ -564,6 +658,7 @@ export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, ques
     .forEach((slot) => clearSlotMarker(slot.element));
   const sequentialRecord = slotRecords.length ? null : sequentialRecords[0] || null;
   sequentialRecords.slice(sequentialRecord ? 1 : 0).forEach((record) => clearSlotMarker(record.element));
+  explanationRecords.forEach((record) => replaceParagraphText(record.element, "해설"));
   if (!slotRecords.length && !sequentialRecord) {
     throw new Error("템플릿에서 #1 문제 슬롯 또는 {{QUESTIONS}} 연속 삽입 지점을 찾지 못했습니다.");
   }
@@ -614,6 +709,10 @@ export async function buildExamFromTemplateHwpx(sourceBytes, templateBytes, ques
       clones.forEach((clone) => parent.insertBefore(clone, slot.element));
       parent.removeChild(slot.element);
     }
+  }
+
+  if (hideEndnotes) {
+    hideEndnoteFormatting(sourceHeaderDocument, [...templateSections.values()]);
   }
 
   updateSectionsInContent(sourceContentDocument, templateSectionNames);

@@ -5,6 +5,7 @@ import { parseHwpx, prepareHwpxForPreview } from "./parser.js";
 import { applyTemplateFieldValues, inspectTemplateFields } from "./template-fields.js";
 import {
   buildExamFromTemplateHwpx,
+  inspectTemplateExplanationMarker,
   inspectTemplateSlots,
   validateGeneratedExamHwpx,
 } from "./template-builder.js";
@@ -37,6 +38,7 @@ const elements = {
   selectedCount: document.querySelector("#selected-count"),
   buildExam: document.querySelector("#build-exam"),
   buildStatus: document.querySelector("#build-status"),
+  hideEndnotes: document.querySelector("#hide-endnotes"),
 };
 
 const FIELD_LABELS = {
@@ -69,6 +71,7 @@ let templateBytes = null;
 let templateFilename = "";
 let templateFieldDefinitions = [];
 let templateSlotCount = 0;
+let templateHasExplanationMarker = false;
 let selectedOrdinals = [];
 let defaultTemplatePromise = null;
 const templateFieldValues = new Map();
@@ -277,13 +280,18 @@ async function loadTemplate(file) {
   try {
     ensureHwpxFile(file, "템플릿");
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const [fields, slots] = await Promise.all([inspectTemplateFields(bytes), inspectTemplateSlots(bytes)]);
+    const [fields, slots, hasExplanationMarker] = await Promise.all([
+      inspectTemplateFields(bytes),
+      inspectTemplateSlots(bytes),
+      inspectTemplateExplanationMarker(bytes),
+    ]);
     if (!slots.length) throw new Error("#1, #2 형식의 문제 슬롯을 찾지 못했습니다.");
     templateBytes = bytes;
     templateFilename = file.name;
     templateSlotCount = slots.length;
+    templateHasExplanationMarker = hasExplanationMarker;
     renderTemplateFields(fields);
-    elements.templateFileName.textContent = `${file.name} · 문제 슬롯 ${templateSlotCount}개 · 누름틀 ${fields.reduce((sum, field) => sum + field.count, 0)}곳`;
+    elements.templateFileName.textContent = `${file.name} · 문제 슬롯 ${templateSlotCount}개 · ${templateHasExplanationMarker ? "#해설 있음" : "#해설 없음"} · 누름틀 ${fields.reduce((sum, field) => sum + field.count, 0)}곳`;
     elements.buildStatus.textContent = templateSlotCount
       ? `#1~#${templateSlotCount} 문제 슬롯을 찾았습니다. 입력 순서대로 채웁니다.`
       : "이 템플릿에서 #1, #2 형식의 문제 슬롯을 찾지 못했습니다.";
@@ -292,6 +300,7 @@ async function loadTemplate(file) {
     templateBytes = null;
     templateFilename = "";
     templateSlotCount = 0;
+    templateHasExplanationMarker = false;
     renderTemplateFields([]);
     elements.templateFileName.textContent = `템플릿 분석 실패: ${error.message} · 내장 빈 템플릿을 사용합니다.`;
     refreshOrder();
@@ -364,10 +373,12 @@ async function createExam() {
       preparedTemplate,
       analysisResult.questions,
       selectedOrdinals,
+      { hideEndnotes: elements.hideEndnotes.checked },
     );
     const validation = await validateGeneratedExamHwpx(bytes, {
       expectedQuestionCount: selectedOrdinals.length,
       expectedEndnoteCount: selectedOrdinals.length,
+      expectHiddenEndnotes: elements.hideEndnotes.checked,
     });
     const verification = new HwpDocument(bytes);
     const generatedPages = verification.pageCount();
@@ -375,7 +386,8 @@ async function createExam() {
     if (!generatedPages) throw new Error("생성된 시험지에 표시할 페이지가 없습니다.");
     const stem = (usingCustomTemplate ? templateFilename : sourceFilename).replace(/\.hwpx$/i, "") || "시험지";
     downloadBytes(bytes, `${stem}_선택${selectedOrdinals.length}문항.hwpx`);
-    elements.buildStatus.textContent = `${selectedOrdinals.join(" → ")} 순서 · 미주 ${validation.endnoteCount}개 · ${generatedPages}페이지 검증 완료`;
+    const endnoteStatus = elements.hideEndnotes.checked ? `미주 ${validation.endnoteCount}개 숨김` : `미주 ${validation.endnoteCount}개 유지`;
+    elements.buildStatus.textContent = `${selectedOrdinals.join(" → ")} 순서 · ${endnoteStatus} · ${generatedPages}페이지 검증 완료`;
   } catch (error) {
     elements.buildStatus.textContent = `시험지 생성 실패: ${error.message}`;
   } finally {

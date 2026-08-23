@@ -22,6 +22,7 @@ def build_template() -> None:
     )
 
     title_style = document.styles.ensure_run(bold=True, font="함초롬바탕", size=18)
+    explanation_style = document.styles.ensure_run(bold=True, font="함초롬바탕", size=15)
     meta_style = document.styles.ensure_run(font="함초롬돋움", size=9.5, color="#425B62")
     body_style = document.styles.ensure_run(font="함초롬바탕", size=10.5)
 
@@ -38,6 +39,19 @@ def build_template() -> None:
 
     marker = document.add_paragraph("{{QUESTIONS}}", char_pr_id_ref=body_style)
     document.page.set_columns(2, same_gap=2268, paragraph=marker)
+
+    explanation = document.add_paragraph(
+        "#해설",
+        char_pr_id_ref=explanation_style,
+        pageBreak="1",
+    )
+    document.page.set_columns(1, paragraph=explanation)
+    document.styles.apply_paragraph_format(
+        paragraph_index=4,
+        alignment="CENTER",
+        spacing_after_pt=10,
+        keep_with_next=True,
+    )
     document.page.set_page_number(position="BOTTOM_CENTER")
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="HWPX 문제은행을 브라우저에서 분석하고 시험지 템플릿의 누름틀 값을 입력합니다." />
-    <meta name="hwpx-exam-builder-version" content="template-slots-v1" />
+    <meta name="hwpx-exam-builder-version" content="endnote-hide-v1" />
     <title>HWPX Exam Builder</title>
   </head>
   <body>
@@ -64,6 +64,10 @@
               <button class="primary" id="build-exam" type="button" disabled>시험지 생성</button>
             </div>
             <p>숫자를 띄어쓰기로 입력한 뒤 Enter를 누르면 입력한 순서 그대로 배치합니다. 현재 <strong id="selected-count">0</strong>문항</p>
+            <label class="endnote-option" for="hide-endnotes">
+              <input id="hide-endnotes" type="checkbox" />
+              <span><strong>미주 숨기기</strong><small>미주 글자와 수식을 1pt·흰색으로 처리</small></span>
+            </label>
           </div>
           <p class="build-status" id="build-status" aria-live="polite"></p>
         </section>

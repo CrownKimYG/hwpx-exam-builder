@@ -13,6 +13,7 @@ def test_public_exam_template_is_valid_and_content_free() -> None:
 
     assert "선택 문항 시험지" in section
     assert "{{QUESTIONS}}" in section
+    assert "#해설" in section
     assert 'colCount="2"' in section
     assert "[정답]" not in section
     assert "[해설]" not in section
@@ -24,8 +25,11 @@ def test_web_uses_order_input_and_optional_template() -> None:
     builder_js = open("web/src/template-builder.js", encoding="utf-8").read()
 
     assert 'id="question-order"' in html
+    assert 'id="hide-endnotes"' in html
     assert "문항 미리보기" not in html
     assert "dragenter" in main_js and "drop" in main_js
     assert "selectedOrdinals.join" in main_js
     assert "basic-math-exam.hwpx" in main_js
     assert 'SEQUENTIAL_MARKER = "{{QUESTIONS}}"' in builder_js
+    assert 'EXPLANATION_MARKER = "#해설"' in builder_js
+    assert 'equation.setAttribute("baseUnit", "100")' in builder_js
