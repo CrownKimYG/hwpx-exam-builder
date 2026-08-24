@@ -25,6 +25,36 @@ test("parses HWP filename metadata with the HWPX rule", () => {
   assert.equal(parsed.volume, "01");
 });
 
+test("parses every filename pattern in the 27 EBS bank folder", () => {
+  const filenames = [
+    "[수능특강 유형] 2027 01.지수와 로그(01)_수학Ⅰ[36문제].hwpx",
+    "[수능특강 유형] 2027 02.지수함수와 로그함수(02)_수학Ⅰ[34문제].hwp",
+    "[수능특강 유형] 2027 03.삼각함수(01)_수학Ⅰ[34문제].hwp",
+    "[수능특강 유형] 2027 04.사인법칙과 코사인법칙(02)_수학Ⅰ[38문제].hwp",
+    "[수능특강 유형] 2027 05.등차수열과 등비수열(01)_수학Ⅰ[34문제].hwp",
+    "[수능특강 유형] 2027 06.수열의 합과 수학적 귀납법(02)_수학Ⅰ[35문제].hwp",
+    "[수능특강 유형] 2027 01.함수의 극한(01)_수학Ⅱ [30문제].hwpx",
+    "[수능특강 유형] 2027 02.함수의 연속(02)_수학Ⅱ [28문제].hwp",
+    "[수능특강 유형] 2027 03.미분계수와 도함수(01)_수학Ⅱ [28문제].hwp",
+    "[수능특강 유형] 2027 04.도함수의 활용(1)(02)_수학Ⅱ [28문제].hwp",
+    "[수능특강 유형] 2027 05.도함수의 활용(2)(01)_수학Ⅱ [29문제].hwp",
+    "[수능특강 유형] 2027 06.부정적분과 정적분(02)_수학Ⅱ [30문제].hwp",
+    "[수능특강 유형] 2027 07.정적분의 활용(01)_수학Ⅱ [26문제].hwp",
+  ];
+
+  filenames.forEach((filename) => {
+    const parsed = parseBankFilename(filename);
+    assert.equal(parsed.parsed, true, filename);
+    assert.notEqual(parsed.subject, "과목 미분류", filename);
+    assert.ok(parsed.unitNumber, filename);
+    assert.ok(parsed.unitName, filename);
+  });
+
+  const nested = parseBankFilename("[수능특강 유형] 2027 04.도함수의 활용(1)(02)_수학Ⅱ [28문제].hwp");
+  assert.equal(nested.unitName, "도함수의 활용(1)");
+  assert.equal(nested.volume, "02");
+});
+
 test("normalizes difficulty and question codes", () => {
   assert.equal(difficultyFromLabel("기초연습"), "lv1");
   assert.equal(difficultyFromLabel("예제"), "유제");

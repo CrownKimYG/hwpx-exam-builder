@@ -199,9 +199,7 @@ async function activatePreviewFile(code) {
   elements.pageLoading.classList.remove("hidden");
   elements.pageCanvas.classList.add("hidden");
   try {
-    const previewBytes = record.convertedFromHwp
-      ? record.sourceBytes
-      : await prepareHwpxForPreview(record.bytes);
+    const previewBytes = await prepareHwpxForPreview(record.bytes);
     await rhwpReady;
     if (request !== previewRequest) return;
     documentViewer?.free?.();
@@ -541,7 +539,6 @@ function renderQuickMatrix() {
       const input = createElement("input", {
         attributes: {
           type: "text",
-          placeholder: "#1 #2",
           "aria-label": `${unit.label} ${difficulty || "난이도 랜덤"}`,
           "data-unit-key": unit.key || "",
           "data-difficulty": difficulty || "",

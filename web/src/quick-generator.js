@@ -31,9 +31,26 @@ export function parseSlotReferences(value, questionCount) {
   const source = String(value || "").trim();
   if (!source) return [];
   const tokens = source.split(/[\s,]+/).filter(Boolean);
-  const malformed = tokens.find((token) => !/^#?\d+$/.test(token));
-  if (malformed) throw new Error(`${malformed}은 올바른 문항 위치가 아닙니다. #1 또는 1 형식으로 입력하세요.`);
-  const slots = tokens.map((token) => Number(token.replace("#", "")));
+  if (tokens.some((token) => /^all$/i.test(token))) {
+    if (tokens.length !== 1) throw new Error("All은 다른 문항 번호와 함께 입력할 수 없습니다.");
+    return Array.from({ length: questionCount }, (_, index) => index + 1);
+  }
+  const slots = [];
+  for (const token of tokens) {
+    const single = token.match(/^#?(\d+)$/);
+    if (single) {
+      slots.push(Number(single[1]));
+      continue;
+    }
+    const range = token.match(/^#?(\d+)~{1,2}#?(\d+)$/);
+    if (!range) {
+      throw new Error(`${token}은 올바른 문항 위치가 아닙니다. #1, #1~~4 또는 All 형식으로 입력하세요.`);
+    }
+    const start = Number(range[1]);
+    const end = Number(range[2]);
+    if (start > end) throw new Error(`${token}은 시작 번호가 끝 번호보다 큽니다.`);
+    for (let slot = start; slot <= end; slot += 1) slots.push(slot);
+  }
   const invalid = slots.find((slot) => slot < 1 || slot > questionCount);
   if (invalid != null) throw new Error(`#${invalid}은 시험지 문항 수 범위를 벗어났습니다.`);
   const duplicate = slots.find((slot, index) => slots.indexOf(slot) !== index);

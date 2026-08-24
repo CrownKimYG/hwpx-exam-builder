@@ -1,4 +1,9 @@
 import JSZip from "jszip";
+import {
+  choiceNumberFromShapeComment,
+  normalizeEquationScript,
+  replaceChoiceNumberPictures,
+} from "./parser.js";
 
 const SECTION_RE = /^Contents\/section\d+\.xml$/;
 const SLOT_RE = /^#(\d+)$/;
@@ -306,6 +311,26 @@ function updateSectionsInContent(sourceContentDocument, sectionNames) {
 function removeLayoutControls(element) {
   descendants(element, "secPr").forEach((node) => node.remove());
   descendants(element, "colPr").forEach((node) => node.remove());
+  // linesegarray caches coordinates for the source page. Once a paragraph is
+  // moved into a different template/column, those coordinates must be rebuilt.
+  descendants(element, "linesegarray").forEach((node) => node.remove());
+  descendants(element, "script").forEach((script) => {
+    const cleaned = normalizeEquationScript(script.textContent || "");
+    if (cleaned) {
+      script.textContent = cleaned;
+      return;
+    }
+    let equation = script.parentElement;
+    while (equation && localName(equation) !== "equation") equation = equation.parentElement;
+    equation?.remove();
+  });
+  descendants(element, "t").forEach((textNode) => {
+    if ((textNode.textContent || "").trim().toLowerCase() === "zb") textNode.textContent = "";
+  });
+  // Some converted banks store ①–⑤ as tiny JPGs. Imported packages can
+  // contain duplicate/wrong bytes for those generic filenames, so make the
+  // visible choice labels deterministic and keep their size uniform.
+  replaceChoiceNumberPictures(element);
   const paragraphs = localName(element) === "p"
     ? [element, ...descendants(element, "p")]
     : descendants(element, "p");
@@ -334,7 +359,11 @@ function countNamed(elements, name) {
   ), 0);
 }
 
-function ensureLeftParagraphStyles(sourceHeaderDocument, elements) {
+function ensureLeftParagraphStyles(
+  sourceHeaderDocument,
+  elements,
+  { minimumLineSpacingPercent = null } = {},
+) {
   const paraProperties = findRefContainer(sourceHeaderDocument, "paraProperties");
   if (!paraProperties) return;
   const paraStyles = directChildrenByName(paraProperties, "paraPr");
@@ -358,12 +387,64 @@ function ensureLeftParagraphStyles(sourceHeaderDocument, elements) {
         clone.appendChild(align);
       }
       align.setAttribute("horizontal", "LEFT");
+      if (minimumLineSpacingPercent) {
+        descendants(clone, "lineSpacing").forEach((lineSpacing) => {
+          lineSpacing.setAttribute("type", "PERCENT");
+          lineSpacing.setAttribute(
+            "value",
+            String(Math.max(Number(lineSpacing.getAttribute("value") || 0), minimumLineSpacingPercent)),
+          );
+        });
+      }
       paraProperties.appendChild(clone);
       mapped.set(oldId, newId);
     }
     if (mapped.has(oldId)) element.setAttribute("paraPrIDRef", mapped.get(oldId));
   });
   paraProperties.setAttribute("itemCnt", String(directChildrenByName(paraProperties, "paraPr").length));
+}
+
+function removeEndnoteAutoNumbers(elements) {
+  elements.forEach((element) => {
+    descendants(element, "autoNum")
+      .filter((autoNumber) => autoNumber.getAttribute("numType") === "ENDNOTE")
+      .forEach((autoNumber) => {
+        let control = autoNumber.parentElement;
+        while (control && control !== element && localName(control) !== "ctrl") control = control.parentElement;
+        (control && localName(control) === "ctrl" ? control : autoNumber).remove();
+      });
+  });
+}
+
+function restoreVisibleSolutionFormatting(sourceHeaderDocument, elements) {
+  const charProperties = findRefContainer(sourceHeaderDocument, "charProperties");
+  if (!charProperties) return;
+  const styles = directChildrenByName(charProperties, "charPr");
+  const byId = new Map(styles.map((style) => [style.getAttribute("id"), style]));
+  const isHiddenStyle = (style) => style
+    && Number(style.getAttribute("height") || 0) <= 100
+    && (style.getAttribute("textColor") || "").toUpperCase() === "#FFFFFF";
+  const fallback = styles.find((style) => (
+    style.getAttribute("height") === "900"
+    && (style.getAttribute("textColor") || "#000000").toUpperCase() === "#000000"
+  )) || styles.find((style) => !isHiddenStyle(style));
+  if (!fallback) return;
+
+  elements.forEach((element) => {
+    descendants(element, "run").forEach((run) => {
+      if (isHiddenStyle(byId.get(run.getAttribute("charPrIDRef")))) {
+        run.setAttribute("charPrIDRef", fallback.getAttribute("id"));
+      }
+    });
+    descendants(element, "equation").forEach((equation) => {
+      const isHiddenEquation = Number(equation.getAttribute("baseUnit") || 0) <= 100
+        && (equation.getAttribute("textColor") || "").toUpperCase() === "#FFFFFF";
+      if (isHiddenEquation) {
+        equation.setAttribute("baseUnit", fallback.getAttribute("height") || "900");
+        equation.setAttribute("textColor", "#000000");
+      }
+    });
+  });
 }
 
 function clearSlotMarker(paragraph) {
@@ -397,7 +478,21 @@ function ensureHiddenEndnoteStyle(headerDocument) {
 function hideEndnoteFormatting(headerDocument, sectionDocuments) {
   const hiddenStyleId = ensureHiddenEndnoteStyle(headerDocument);
   sectionDocuments.forEach((documentNode) => {
+    descendants(documentNode.documentElement, "endNotePr").forEach((noteProperties) => {
+      descendants(noteProperties, "noteLine").forEach((line) => {
+        line.setAttribute("length", "0");
+        line.setAttribute("color", "#FFFFFF");
+      });
+      descendants(noteProperties, "noteSpacing").forEach((spacing) => {
+        spacing.setAttribute("betweenNotes", "0");
+        spacing.setAttribute("belowLine", "0");
+        spacing.setAttribute("aboveLine", "0");
+      });
+    });
     descendants(documentNode.documentElement, "endNote").forEach((note) => {
+      let markerRun = note.parentElement;
+      while (markerRun && localName(markerRun) !== "run") markerRun = markerRun.parentElement;
+      if (markerRun) markerRun.setAttribute("charPrIDRef", hiddenStyleId);
       descendants(note, "run").forEach((run) => run.setAttribute("charPrIDRef", hiddenStyleId));
       descendants(note, "equation").forEach((equation) => {
         equation.setAttribute("baseUnit", "100");
@@ -519,9 +614,15 @@ export async function validateGeneratedExamHwpx(
   }
 
   const unresolvedFields = [];
+  const watermarkArtifacts = [];
   sectionDocuments.forEach((documentNode) => {
     descendants(documentNode.documentElement, "t").forEach((node) => {
       if (/\{\{[^{}]+\}\}/.test(node.textContent || "")) unresolvedFields.push(node.textContent.trim());
+      if ((node.textContent || "").trim().toLowerCase() === "zb") watermarkArtifacts.push("zb");
+    });
+    descendants(documentNode.documentElement, "script").forEach((node) => {
+      const script = (node.textContent || "").trim();
+      if (normalizeEquationScript(script) !== script) watermarkArtifacts.push("equation");
     });
     descendants(documentNode.documentElement, "stringParam").forEach((node) => {
       if (node.getAttribute("name") === "Direction" && /\{\{[^{}]+\}\}/.test(node.textContent || "")) {
@@ -531,6 +632,29 @@ export async function validateGeneratedExamHwpx(
   });
   if (unresolvedFields.length) {
     errors.push(`미치환 누름틀 값이 남았습니다: ${[...new Set(unresolvedFields)].join(", ")}`);
+  }
+  if (watermarkArtifacts.length) {
+    errors.push(`제거되지 않은 워터마크가 ${watermarkArtifacts.length}개 남았습니다.`);
+  }
+
+  const choiceNumberPictures = sectionDocuments.flatMap((documentNode) => (
+    descendants(documentNode.documentElement, "pic").filter((picture) => (
+      choiceNumberFromShapeComment(firstDescendant(picture, "shapeComment")?.textContent)
+    ))
+  ));
+  if (choiceNumberPictures.length) {
+    errors.push(`선택지 번호 그림이 ${choiceNumberPictures.length}개 남았습니다.`);
+  }
+  const strayEndnoteNumbers = sectionDocuments.flatMap((documentNode) => (
+    descendants(documentNode.documentElement, "autoNum").filter((autoNumber) => {
+      if (autoNumber.getAttribute("numType") !== "ENDNOTE") return false;
+      let ancestor = autoNumber.parentElement;
+      while (ancestor && localName(ancestor) !== "endNote") ancestor = ancestor.parentElement;
+      return !ancestor;
+    })
+  ));
+  if (strayEndnoteNumbers.length) {
+    errors.push(`해설 본문에 미주 자동번호가 ${strayEndnoteNumbers.length}개 남았습니다.`);
   }
 
   const contentEntry = zip.file("Contents/content.hpf");
@@ -551,12 +675,20 @@ export async function validateGeneratedExamHwpx(
           || style.getAttribute("height") !== "100"
           || (style.getAttribute("textColor") || "").toUpperCase() !== "#FFFFFF";
       });
+      const visibleMarkers = endnotes.filter((note) => {
+        let markerRun = note.parentElement;
+        while (markerRun && localName(markerRun) !== "run") markerRun = markerRun.parentElement;
+        const style = styles.get(markerRun?.getAttribute("charPrIDRef"));
+        return !style
+          || style.getAttribute("height") !== "100"
+          || (style.getAttribute("textColor") || "").toUpperCase() !== "#FFFFFF";
+      });
       const visibleEquations = endnotes.flatMap((note) => descendants(note, "equation")).filter((equation) => (
         equation.getAttribute("baseUnit") !== "100"
         || (equation.getAttribute("textColor") || "").toUpperCase() !== "#FFFFFF"
       ));
-      if (visibleRuns.length || visibleEquations.length) {
-        errors.push("미주 숨김 서식(1pt·흰색)이 일부 미주 내용에 적용되지 않았습니다.");
+      if (visibleRuns.length || visibleMarkers.length || visibleEquations.length) {
+        errors.push("미주 숨김 서식(1pt·흰색)이 일부 미주 내용 또는 번호 표식에 적용되지 않았습니다.");
       }
     }
     const manifest = firstDescendant(contentDocument.documentElement, "manifest");
@@ -869,12 +1001,21 @@ function solutionParagraphs(question, targetDocument, context, outputIndex, tran
   const explanationText = explanation.flatMap((paragraph) => descendants(paragraph, "t"))
     .find((node) => (node.textContent || "").includes("[해설]"));
   if (explanationText) explanationText.textContent = explanationText.textContent.replace("[해설]", "해설");
+  removeEndnoteAutoNumbers(result);
   result.forEach((paragraph) => removeLayoutControls(paragraph));
+  restoreVisibleSolutionFormatting(context.headerDocument, result);
   remapCloneReferences(result, context);
   return result;
 }
 
-function addSolutionsAppendix(templateSections, explanationRecords, selectedQuestions, sourceContexts, transformMode) {
+function addSolutionsAppendix(
+  templateSections,
+  explanationRecords,
+  selectedQuestions,
+  sourceContexts,
+  outputHeader,
+  transformMode,
+) {
   let targetRecord = explanationRecords[0] || null;
   explanationRecords.slice(targetRecord ? 1 : 0).forEach((record) => clearSlotMarker(record.element));
   let targetDocument;
@@ -898,8 +1039,11 @@ function addSolutionsAppendix(templateSections, explanationRecords, selectedQues
   }
   selectedQuestions.forEach((question, index) => {
     const context = sourceContexts.get(question.fileCode);
-    solutionParagraphs(question, targetDocument, context, index + 1, transformMode)
-      .forEach((paragraph) => parent.insertBefore(paragraph, insertionPoint));
+    const paragraphs = solutionParagraphs(question, targetDocument, context, index + 1, transformMode);
+    // Explanation equations are frequently taller than the surrounding text.
+    // A wider minimum prevents the renderer from stacking adjacent lines.
+    ensureLeftParagraphStyles(outputHeader, paragraphs, { minimumLineSpacingPercent: 220 });
+    paragraphs.forEach((paragraph) => parent.insertBefore(paragraph, insertionPoint));
   });
 }
 
@@ -1033,7 +1177,14 @@ export async function buildExamFromSourcesHwpx(
   }
 
   if (includeSolutions) {
-    addSolutionsAppendix(templateSections, explanationRecords, selectedQuestions, sourceContexts, transformMode);
+    addSolutionsAppendix(
+      templateSections,
+      explanationRecords,
+      selectedQuestions,
+      sourceContexts,
+      outputHeader,
+      transformMode,
+    );
   } else {
     explanationRecords.forEach((record) => clearSlotMarker(record.element));
   }

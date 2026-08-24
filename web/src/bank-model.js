@@ -16,7 +16,10 @@ export function difficultyFromLabel(label) {
 export function parseBankFilename(filename) {
   const normalized = normalizeKorean(filename);
   const stem = normalized.replace(/\.(?:hwp|hwpx)$/i, "");
-  const match = stem.match(/(\d{1,3})\.\s*([^()[\]_]+?)\s*\((\d+)\)\s*[_-]\s*([^\[\]]+?)(?:\s*\[(\d+)\s*문제\])?$/);
+  // The unit name may itself contain parenthesized parts such as
+  // "도함수의 활용(1)". Treat only the final numeric parentheses
+  // immediately before the subject separator as the volume number.
+  const match = stem.match(/(\d{1,3})\.\s*([^\[_]+?)\s*\((\d+)\)\s*[_-]\s*([^\[\]]+?)(?:\s*\[(\d+)\s*문제\])?$/);
   if (!match) {
     return {
       subject: "과목 미분류",

@@ -38,7 +38,13 @@ test("random row and column use null predicates", () => {
 
 test("slot references reject partial or malformed tokens", () => {
   assert.deepEqual(parseSlotReferences("#1 2, #3", 3), [1, 2, 3]);
+  assert.deepEqual(parseSlotReferences("#1~~4 #6~7", 8), [1, 2, 3, 4, 6, 7]);
+  assert.deepEqual(parseSlotReferences("All", 4), [1, 2, 3, 4]);
+  assert.deepEqual(parseSlotReferences("all", 3), [1, 2, 3]);
   assert.throws(() => parseSlotReferences("abc1", 3), /올바른 문항 위치/);
+  assert.throws(() => parseSlotReferences("All #1", 3), /함께 입력할 수 없습니다/);
+  assert.throws(() => parseSlotReferences("#3~~1", 3), /시작 번호/);
+  assert.throws(() => parseSlotReferences("#1~~2 #2", 3), /중복/);
   assert.throws(() => parseSlotReferences("#1 #1", 3), /중복/);
   assert.throws(() => parseSlotReferences("#4", 3), /범위를 벗어났습니다/);
 });

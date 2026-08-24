@@ -5,7 +5,10 @@ const TITLE_RE = /❙\s*(예제|유제|기초연습|기본연습|실력완성)\s
 const DIFFICULTY_RE = /(예제|유제|기초(?:연습)?|기본(?:연습)?|실력(?:완성)?)/;
 const CHOICE_PARAGRAPH_IDS = new Set(["6", "16"]);
 const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
-const WATERMARK_SUFFIX_RE = /(?:^|\r?\n)\s*from\s*\r?\n\s*={20,}[\s\S]*$/i;
+const WATERMARK_MARKER_RE = /(?:족보닷컴\s*\(\s*zocbo\.com\s*\)|zocbo\.com)/i;
+const WATERMARK_PREFIX_RE = /(?:\s+from\s*)?={20,}\s*$/i;
+const CHOICE_IMAGE_NAME_RE = /원본\s*그림의\s*이름\s*:\s*([1-5])\.(?:jpe?g|png)\b/i;
+const CIRCLED_CHOICES = Object.freeze(["①", "②", "③", "④", "⑤"]);
 
 export const DEFAULT_EXAM_TEMPLATE = Object.freeze({
   id: "basic-math-exam-v1",
@@ -37,7 +40,52 @@ export function equationScript(equation) {
 }
 
 export function normalizeEquationScript(script) {
-  return (script || "").replace(WATERMARK_SUFFIX_RE, "").trim();
+  const source = String(script || "");
+  const markerIndex = source.search(WATERMARK_MARKER_RE);
+  if (markerIndex < 0) return source.trim();
+  const prefix = source.slice(0, markerIndex);
+  const delimiter = prefix.match(WATERMARK_PREFIX_RE);
+  return prefix.slice(0, delimiter?.index ?? prefix.length).trim();
+}
+
+export function choiceNumberFromShapeComment(comment) {
+  const match = String(comment || "").match(CHOICE_IMAGE_NAME_RE);
+  return match ? Number(match[1]) : null;
+}
+
+function choiceNumberFromPicture(picture) {
+  return choiceNumberFromShapeComment(firstDescendant(picture, "shapeComment")?.textContent);
+}
+
+function isInsideNamedElement(node, boundary, name) {
+  let current = node.parentElement;
+  while (current && current !== boundary) {
+    if (localName(current) === name) return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function choicePictures(element, { skipNotes = false } = {}) {
+  return descendants(element, "pic").filter((picture) => (
+    choiceNumberFromPicture(picture)
+    && (!skipNotes || !isInsideNamedElement(picture, element, "endNote"))
+  ));
+}
+
+export function replaceChoiceNumberPictures(root) {
+  let replacements = 0;
+  choicePictures(root).forEach((picture) => {
+    const number = choiceNumberFromPicture(picture);
+    const text = picture.ownerDocument.createElementNS(
+      picture.namespaceURI,
+      `${picture.prefix || "hp"}:t`,
+    );
+    text.textContent = `${CIRCLED_CHOICES[number - 1]}\u00a0`;
+    picture.parentNode?.replaceChild(text, picture);
+    replacements += 1;
+  });
+  return replacements;
 }
 
 export function plainText(element, { skipNotes = false, equationMode = "script" } = {}) {
@@ -149,6 +197,7 @@ export async function prepareHwpxForPreview(data) {
     descendants(documentNode.documentElement, "t").forEach((textNode) => {
       if ((textNode.textContent || "").trim().toLowerCase() === "zb") textNode.textContent = "";
     });
+    replaceChoiceNumberPictures(documentNode.documentElement);
     zip.file(sectionName, new XMLSerializer().serializeToString(documentNode));
   }));
 
@@ -172,6 +221,9 @@ function equalBytes(left, right) {
 
 async function answerValue(zip, answerParagraph, choiceRefs) {
   const warnings = [];
+  const answerPicture = firstDescendant(answerParagraph, "pic");
+  const picturedChoice = answerPicture ? choiceNumberFromPicture(answerPicture) : null;
+  if (picturedChoice) return ["multiple_choice", picturedChoice, warnings];
   const answerImages = imageRefs(answerParagraph);
   if (answerImages.length) {
     const answerBytes = await bytesForRef(zip, answerImages[0]);
@@ -189,18 +241,27 @@ async function answerValue(zip, answerParagraph, choiceRefs) {
     return ["short_answer", value || null, warnings];
   }
   const value = plainText(answerParagraph).replace("[정답]", "").trim();
+  const textChoice = CIRCLED_CHOICES.findIndex((choice) => value.includes(choice));
+  if (textChoice >= 0) return ["multiple_choice", textChoice + 1, warnings];
   if (!value) warnings.push("정답 영역에서 그림, 수식 또는 텍스트를 찾지 못했습니다.");
   return ["short_answer", value || null, warnings];
+}
+
+function isChoiceParagraph(paragraph) {
+  return localName(paragraph) === "p" && (
+    CHOICE_PARAGRAPH_IDS.has(paragraph.getAttribute("paraPrIDRef"))
+    || choicePictures(paragraph, { skipNotes: true }).length > 0
+  );
 }
 
 function choiceFragments(block) {
   const choices = [];
   block.forEach((paragraph) => {
-    if (localName(paragraph) !== "p" || !CHOICE_PARAGRAPH_IDS.has(paragraph.getAttribute("paraPrIDRef"))) return;
+    if (!isChoiceParagraph(paragraph)) return;
     let current = null;
     function visit(node) {
       const name = localName(node);
-      if (name === "img" && node.getAttribute("binaryItemIDRef")) {
+      if (name === "pic" && choiceNumberFromPicture(node)) {
         current = [];
         choices.push(current);
         return;
@@ -300,18 +361,19 @@ export async function parseHwpx(file) {
         .filter(({ element, childIndex }) => (
           childIndex >= contentStart
           && childIndex < end
-          && localName(element) === "p"
-          && CHOICE_PARAGRAPH_IDS.has(element.getAttribute("paraPrIDRef"))
+          && isChoiceParagraph(element)
         ))
         .map(({ childIndex }) => childIndex);
       const noteParagraphs = descendants(note, "p");
       const answerParagraph = noteParagraphs.find((p) => plainText(p).includes("[정답]")) || noteParagraphs[0] || note;
       const explanationStart = noteParagraphs.findIndex((p) => plainText(p).includes("[해설]"));
       const explanationParagraphs = explanationStart >= 0 ? noteParagraphs.slice(explanationStart) : [];
-      const choiceRefs = block.flatMap((element) =>
-        localName(element) === "p" && CHOICE_PARAGRAPH_IDS.has(element.getAttribute("paraPrIDRef"))
-          ? imageRefs(element, { skipNotes: true }) : []
-      );
+      const choiceRefs = block.flatMap((element) => {
+        if (!isChoiceParagraph(element)) return [];
+        return choicePictures(element, { skipNotes: true })
+          .map((picture) => firstDescendant(picture, "img")?.getAttribute("binaryItemIDRef"))
+          .filter(Boolean);
+      });
       const [answerType, answer, warnings] = await answerValue(zip, answerParagraph, choiceRefs);
       if (answerType === "multiple_choice" && choiceRefs.length !== 5) {
         warnings.push(`객관식 선택지 번호 그림이 ${choiceRefs.length}개입니다.`);
@@ -324,7 +386,7 @@ export async function parseHwpx(file) {
       );
       const questionElements = children
         .slice(contentStart, end)
-        .filter((element) => !CHOICE_PARAGRAPH_IDS.has(element.getAttribute("paraPrIDRef")))
+        .filter((element) => !isChoiceParagraph(element))
         .map(withoutEndnotes)
         .filter((element) => plainText(element).trim());
       const ordinal = questions.length + 1;
