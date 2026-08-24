@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { difficultyFromLabel } from "./bank-model.js";
+import { coverZocboWatermark } from "./image-watermark.js";
 
 const TITLE_RE = /❙\s*(예제|유제|기초연습|기본연습|실력완성)\s*(\d+)\s*(유사유형)?/;
 const DIFFICULTY_RE = /(예제|유제|기초(?:연습)?|기본(?:연습)?|실력(?:완성)?)/;
@@ -170,6 +171,27 @@ export async function prepareHwpxForPreview(data) {
     // 원본 그림은 종류나 파일명과 관계없이 그대로 유지한다.
     zip.file(sectionName, new XMLSerializer().serializeToString(documentNode));
   }));
+
+  const imageTypes = new Map([
+    ["jpg", "image/jpeg"],
+    ["jpeg", "image/jpeg"],
+    ["png", "image/png"],
+  ]);
+  const imageNames = Object.keys(zip.files).filter((name) => {
+    const extension = name.split(".").pop()?.toLowerCase();
+    return name.startsWith("BinData/") && imageTypes.has(extension);
+  });
+  for (const imageName of imageNames) {
+    const entry = zip.file(imageName);
+    const extension = imageName.split(".").pop().toLowerCase();
+    const original = await entry.async("uint8array");
+    try {
+      const result = await coverZocboWatermark(original, imageTypes.get(extension));
+      if (result.bounds) zip.file(imageName, result.bytes);
+    } catch {
+      // 읽지 못하는 그림은 원본을 유지해 미리보기 전체가 실패하지 않게 한다.
+    }
+  }
 
   return zip.generateAsync({
     type: "uint8array",
