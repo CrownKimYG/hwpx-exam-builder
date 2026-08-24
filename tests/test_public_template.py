@@ -44,8 +44,10 @@ def test_web_uses_multi_bank_exam_workspace() -> None:
     assert 'dataset.rendererState = "ready"' in main_js
     assert "문항 미리보기" not in html
     assert "webkitGetAsEntry" in main_js
-    assert "Shift+↑/↓" in html
-    assert html.count("Shift+↑/↓ 파일 이동") == 1
+    assert "Shift+↑/↓" not in html
+    assert "예: 01-003" not in main_js
+    assert "브라우저에서만 처리" not in html
+    assert "원본 그대로 복사해 시험지를 조립합니다" not in html
     assert 'content="multi-bank-v2"' in html
     assert "basic-math-exam.hwpx" in main_js
     assert "createProjectSnapshot" in main_js

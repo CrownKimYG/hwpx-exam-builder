@@ -289,7 +289,7 @@ function renderQuestionMetadata(record) {
     elements.questionMetadata.replaceChildren();
     return;
   }
-  const heading = createElement("p", { className: "question-label", text: `${record.code} 문항별 난이도 · 복사 범위와 무관한 선택 정보입니다.` });
+  const heading = createElement("p", { className: "question-label", text: `${record.code} 문항별 난이도` });
   const rows = record.questions.map((question) => {
     const row = createElement("div", { className: "question-meta-row" });
     const code = createElement("strong", { text: question.code });
@@ -360,13 +360,13 @@ function resetBank({ clearProject = true } = {}) {
   if (clearProject) state.pendingProject = null;
   elements.pageCanvas.replaceChildren();
   elements.pageCanvas.classList.add("hidden");
-  elements.pageLoading.textContent = "파일을 선택하면 원본 페이지를 표시합니다.";
+  elements.pageLoading.textContent = "";
   elements.pageLoading.classList.remove("hidden");
   elements.pageLabel.textContent = "0 / 0";
   elements.workspace.classList.add("hidden");
   elements.generationBar.classList.add("hidden");
   rebuildQuestionIndex();
-  setStatus("문제은행을 초기화했습니다. 새 폴더를 선택하세요.");
+  setStatus("초기화 완료.");
 }
 
 function removeBankRecord(code) {
@@ -631,7 +631,7 @@ function addExam(codes = [], { title = "" } = {}) {
 
 function renderExamDrafts() {
   if (!state.exams.length) {
-    elements.examList.replaceChildren(createElement("div", { className: "exam-empty", text: "시험지를 추가하거나 빠른 출제를 실행하세요." }));
+    elements.examList.replaceChildren();
     validateExamDrafts();
     return;
   }
@@ -650,7 +650,6 @@ function renderExamDrafts() {
     header.append(title, remove);
     const textarea = createElement("textarea", {
       attributes: {
-        placeholder: "예: 01-003 01-015 02-004",
         "aria-label": `${exam.title} 문항 코드`,
       },
     });
@@ -734,15 +733,15 @@ async function loadTemplate(file) {
     templateState.slots = slots;
     templateState.hasExplanationMarker = hasExplanationMarker;
     renderTemplateFields(fields);
-    elements.templateFileName.textContent = `${file.name} · ${slots.length ? `슬롯 ${slots.length}개` : "연속 삽입"} · ${hasExplanationMarker ? "#해설 있음" : "해설 자동 추가"}`;
-    setBuildStatus("사용자 템플릿을 준비했습니다.");
+    elements.templateFileName.textContent = file.name;
+    setBuildStatus("템플릿 준비 완료.");
   } catch (error) {
     templateState.bytes = null;
     templateState.filename = "";
     templateState.slots = [];
     templateState.hasExplanationMarker = false;
     renderTemplateFields([]);
-    elements.templateFileName.textContent = "내장 기본 템플릿 · 문제 1쪽 1문항 · 해설 2단";
+    elements.templateFileName.textContent = "기본 템플릿";
     setBuildStatus(`템플릿 분석 실패: ${error.message}`, "error");
   }
 }
@@ -900,9 +899,7 @@ async function loadProject(file) {
     const project = validateProjectSnapshot(JSON.parse(await file.text()));
     state.pendingProject = project;
     if (state.files.length) applyPendingProjectSettings();
-    setStatus(state.files.length
-      ? "프로젝트 설정을 현재 문제은행에 적용했습니다."
-      : "프로젝트 설정을 읽었습니다. 해당 문제은행 폴더를 선택하세요.", "success");
+    setStatus(state.files.length ? "설정 적용 완료." : "설정 불러오기 완료.", "success");
   } catch (error) {
     setStatus(`프로젝트 설정 실패: ${error.message}`, "error");
   }
@@ -1010,7 +1007,7 @@ renderExamDrafts();
 rhwpReady
   .then(() => {
     elements.status.dataset.rendererState = "ready";
-    setStatus("렌더러 준비 완료. 문제은행 폴더를 놓거나 선택하세요.");
+    setStatus("준비 완료.");
   })
   .catch((error) => {
     elements.status.dataset.rendererState = "failed";
