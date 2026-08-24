@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { choiceNumberFromShapeComment, normalizeEquationScript } from "./parser.js";
+import {
+  choiceNumberFromShapeComment,
+  findTrimmedContentEnd,
+  hasChoiceParagraphMarker,
+  normalizeEquationScript,
+} from "./parser.js";
 
 test("removes the copyright watermark suffix embedded in an equation script", () => {
   const script = `1 over 2
@@ -29,4 +34,15 @@ test("reads a multiple-choice number from an HWP picture comment", () => {
   assert.equal(choiceNumberFromShapeComment("원본 그림의 이름: 4.jpg"), 4);
   assert.equal(choiceNumberFromShapeComment("원본 그림의 이름 : 5.PNG"), 5);
   assert.equal(choiceNumberFromShapeComment("원본 그림의 이름: graph.jpg"), null);
+});
+
+test("does not classify a problem stem as choices from its paragraph style alone", () => {
+  assert.equal(hasChoiceParagraphMarker(0, "함수의 값은?"), false);
+  assert.equal(hasChoiceParagraphMarker(1, ""), true);
+  assert.equal(hasChoiceParagraphMarker(0, "① 2 ② 4"), true);
+});
+
+test("trims only empty paragraphs after the last question content", () => {
+  assert.equal(findTrimmedContentEnd([true, false, true, false, false]), 3);
+  assert.equal(findTrimmedContentEnd([false, true, false, false], 1, 4), 2);
 });

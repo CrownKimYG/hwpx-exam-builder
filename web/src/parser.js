@@ -3,7 +3,6 @@ import { difficultyFromLabel } from "./bank-model.js";
 
 const TITLE_RE = /❙\s*(예제|유제|기초연습|기본연습|실력완성)\s*(\d+)\s*(유사유형)?/;
 const DIFFICULTY_RE = /(예제|유제|기초(?:연습)?|기본(?:연습)?|실력(?:완성)?)/;
-const CHOICE_PARAGRAPH_IDS = new Set(["6", "16"]);
 const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const WATERMARK_MARKER_RE = /(?:족보닷컴\s*\(\s*zocbo\.com\s*\)|zocbo\.com)/i;
 const WATERMARK_PREFIX_RE = /(?:\s+from\s*)?={20,}\s*$/i;
@@ -110,6 +109,34 @@ export function plainText(element, { skipNotes = false, equationMode = "script" 
   }
   visit(element);
   return fragments.join("").replace(/[ \t]+/g, " ").trim();
+}
+
+export function hasRenderableElementContent(element, { skipNotes = true } = {}) {
+  if (plainText(element, { skipNotes, equationMode: "placeholder" })) return true;
+  return ["pic", "tbl"].some((name) => descendants(element, name).some((node) => (
+    !skipNotes || !isInsideNamedElement(node, element, "endNote")
+  )));
+}
+
+function trimmedQuestionContentEnd(children, start, end) {
+  const contentFlags = children.map((element) => (
+    hasRenderableElementContent(element, { skipNotes: true })
+  ));
+  return findTrimmedContentEnd(contentFlags, start, end);
+}
+
+export function findTrimmedContentEnd(contentFlags, start = 0, end = contentFlags.length) {
+  let trimmedEnd = end;
+  while (trimmedEnd > start && !contentFlags[trimmedEnd - 1]) trimmedEnd -= 1;
+  return trimmedEnd;
+}
+
+function hasContentAfterLabel(elements, label) {
+  const text = textFromElements(elements, { equationMode: "placeholder" })
+    .replaceAll(label, "")
+    .trim();
+  if (text) return true;
+  return elements.some((element) => ["pic", "tbl"].some((name) => descendants(element, name).length));
 }
 
 function textFromElements(elements, options = {}) {
@@ -247,11 +274,15 @@ async function answerValue(zip, answerParagraph, choiceRefs) {
   return ["short_answer", value || null, warnings];
 }
 
+export function hasChoiceParagraphMarker(choicePictureCount, text) {
+  return choicePictureCount > 0 || CIRCLED_CHOICES.some((choice) => String(text || "").includes(choice));
+}
+
 function isChoiceParagraph(paragraph) {
-  return localName(paragraph) === "p" && (
-    CHOICE_PARAGRAPH_IDS.has(paragraph.getAttribute("paraPrIDRef"))
-    || choicePictures(paragraph, { skipNotes: true }).length > 0
-  );
+  if (localName(paragraph) !== "p") return false;
+  const pictureCount = choicePictures(paragraph, { skipNotes: true }).length;
+  const text = plainText(paragraph, { skipNotes: true, equationMode: "placeholder" });
+  return hasChoiceParagraphMarker(pictureCount, text);
 }
 
 function choiceFragments(block) {
@@ -354,13 +385,14 @@ export async function parseHwpx(file) {
         if (trailingBoundary >= 0) end = trailingBoundary;
       }
       const contentStart = Math.min(meta.contentStart, end);
-      const block = children.slice(meta.start, end);
+      const contentEnd = trimmedQuestionContentEnd(children, contentStart, end);
+      const block = children.slice(meta.start, contentEnd);
       const bodyElements = block.map(withoutEndnotes);
       const choiceElementIndexes = children
         .map((element, childIndex) => ({ element, childIndex }))
         .filter(({ element, childIndex }) => (
           childIndex >= contentStart
-          && childIndex < end
+          && childIndex < contentEnd
           && isChoiceParagraph(element)
         ))
         .map(({ childIndex }) => childIndex);
@@ -378,6 +410,12 @@ export async function parseHwpx(file) {
       if (answerType === "multiple_choice" && choiceRefs.length !== 5) {
         warnings.push(`객관식 선택지 번호 그림이 ${choiceRefs.length}개입니다.`);
       }
+      if (!hasContentAfterLabel([answerParagraph], "[정답]")) {
+        warnings.push("[정답] 영역의 실제 내용이 비어 있습니다.");
+      }
+      if (!hasContentAfterLabel(explanationParagraphs, "[해설]")) {
+        warnings.push("[해설] 영역의 실제 내용이 비어 있습니다.");
+      }
       const bodyXml = serializeWrapper("body", bodyElements, { section: sectionName, anchor: String(anchorIndex) });
       const answerXml = serializeWrapper("answer", [answerParagraph]);
       const explanationXml = serializeWrapper("explanation", explanationParagraphs);
@@ -385,10 +423,11 @@ export async function parseHwpx(file) {
         `<questionBlock ordinal="${questions.length + 1}" sourceLabel="${meta.label}" difficulty="${meta.difficulty}" answerType="${answerType}" answerValue="${answer ?? ""}">${bodyXml}${answerXml}${explanationXml}</questionBlock>`
       );
       const questionElements = children
-        .slice(contentStart, end)
+        .slice(contentStart, contentEnd)
         .filter((element) => !isChoiceParagraph(element))
         .map(withoutEndnotes)
-        .filter((element) => plainText(element).trim());
+        .filter((element) => hasRenderableElementContent(element, { skipNotes: true }));
+      if (!questionElements.length) warnings.push("문제 본문이 비어 있습니다.");
       const ordinal = questions.length + 1;
       const problemEquations = equationRecords(bodyElements, "problem", ordinal);
       const answerEquations = equationRecords([answerParagraph], "answer", ordinal);
@@ -404,9 +443,9 @@ export async function parseHwpx(file) {
         anchorIndex,
         titleStart: meta.hasTitle ? meta.start : null,
         blockStart: meta.start,
-        blockEnd: end,
+        blockEnd: contentEnd,
         contentStart,
-        contentEnd: end,
+        contentEnd,
         hasEndnote: true,
         answerType,
         answer,

@@ -9,6 +9,7 @@ const SECTION_RE = /^Contents\/section\d+\.xml$/;
 const SLOT_RE = /^#(\d+)$/;
 const SEQUENTIAL_MARKER = "{{QUESTIONS}}";
 const EXPLANATION_MARKER = "#해설";
+const CIRCLED_CHOICE_RE = /[①②③④⑤]/g;
 
 const localName = (node) => node.localName || node.nodeName.split(":").pop();
 const descendants = (element, name) => Array.from(element.getElementsByTagNameNS("*", name));
@@ -353,6 +354,58 @@ function hasQuestionContent(elements) {
   });
 }
 
+function trimTrailingEmptyQuestionElements(elements) {
+  while (elements.length && !hasQuestionContent([elements[elements.length - 1]])) elements.pop();
+  return elements;
+}
+
+function hasContentAfterLabel(elements, label) {
+  const clones = elements.map((element) => element.cloneNode(true));
+  clones.forEach((element) => {
+    descendants(element, "t").forEach((node) => {
+      node.textContent = (node.textContent || "").replaceAll(label, "");
+    });
+  });
+  return hasQuestionContent(clones);
+}
+
+function questionIdentity(question) {
+  return question.code || question.sourceLabel || `문항 ${question.ordinal}`;
+}
+
+function assertQuestionReady(question) {
+  const identity = questionIdentity(question);
+  if (!question.questionElements?.length || !hasQuestionContent(question.questionElements)) {
+    throw new Error(`${identity}의 문제 본문이 비어 있습니다.`);
+  }
+  if (!question.hasEndnote || !question.answerElement || !textOf(question.answerElement).includes("[정답]")) {
+    throw new Error(`${identity}의 [정답] 미주가 누락됐습니다.`);
+  }
+  if (!hasContentAfterLabel([question.answerElement], "[정답]")) {
+    throw new Error(`${identity}의 [정답] 내용이 비어 있습니다.`);
+  }
+  if (
+    !question.explanationElements?.length
+    || !question.explanationElements.some((element) => textOf(element).includes("[해설]"))
+  ) {
+    throw new Error(`${identity}의 [해설] 미주가 누락됐습니다.`);
+  }
+  if (!hasContentAfterLabel(question.explanationElements, "[해설]")) {
+    throw new Error(`${identity}의 [해설] 내용이 비어 있습니다.`);
+  }
+  if (question.answerType === "multiple_choice") {
+    if (question.choiceCount !== 5 || question.choices?.length !== 5) {
+      throw new Error(`${identity}의 객관식 선택지는 5개여야 합니다.`);
+    }
+    const answer = Number(question.answer);
+    if (!Number.isInteger(answer) || answer < 1 || answer > 5) {
+      throw new Error(`${identity}의 객관식 정답 번호를 확인하지 못했습니다.`);
+    }
+  } else if (question.answer == null || String(question.answer).trim() === "") {
+    throw new Error(`${identity}의 단답형 정답이 비어 있습니다.`);
+  }
+}
+
 function countNamed(elements, name) {
   return elements.reduce((sum, element) => (
     sum + (localName(element) === name ? 1 : 0) + descendants(element, name).length
@@ -475,6 +528,30 @@ function ensureHiddenEndnoteStyle(headerDocument) {
   return clone.getAttribute("id");
 }
 
+function compactHiddenEndnote(note) {
+  const paragraphs = descendants(note, "p");
+  const answer = paragraphs.find((paragraph) => textOf(paragraph).includes("[정답]")) || null;
+  const explanation = paragraphs.find((paragraph) => textOf(paragraph).includes("[해설]")) || null;
+  const kept = [...new Set([answer, explanation].filter(Boolean))];
+
+  paragraphs.filter((paragraph) => !kept.includes(paragraph)).forEach((paragraph) => paragraph.remove());
+  kept.forEach((paragraph) => {
+    const labels = [];
+    if (paragraph === answer) labels.push("[정답]");
+    if (paragraph === explanation) labels.push("[해설]");
+    ["pic", "equation", "tbl", "ctrl"].forEach((name) => {
+      descendants(paragraph, name).forEach((node) => node.remove());
+    });
+    const textNodes = descendants(paragraph, "t");
+    textNodes.forEach((node, index) => {
+      node.textContent = index === 0 ? labels.join(" ") : "";
+    });
+    paragraph.setAttribute("pageBreak", "0");
+    paragraph.setAttribute("columnBreak", "0");
+  });
+  descendants(note, "linesegarray").forEach((node) => node.remove());
+}
+
 function hideEndnoteFormatting(headerDocument, sectionDocuments) {
   const hiddenStyleId = ensureHiddenEndnoteStyle(headerDocument);
   sectionDocuments.forEach((documentNode) => {
@@ -490,6 +567,7 @@ function hideEndnoteFormatting(headerDocument, sectionDocuments) {
       });
     });
     descendants(documentNode.documentElement, "endNote").forEach((note) => {
+      compactHiddenEndnote(note);
       let markerRun = note.parentElement;
       while (markerRun && localName(markerRun) !== "run") markerRun = markerRun.parentElement;
       if (markerRun) markerRun.setAttribute("charPrIDRef", hiddenStyleId);
@@ -557,6 +635,7 @@ export async function validateGeneratedExamHwpx(
   {
     expectedQuestionCount = 0,
     expectedEndnoteCount = expectedQuestionCount,
+    expectedChoiceNumberCount = null,
     expectHiddenEndnotes = false,
   } = {},
 ) {
@@ -612,6 +691,21 @@ export async function validateGeneratedExamHwpx(
   if (expectedQuestionCount && explanationCount !== expectedQuestionCount) {
     errors.push(`[해설] 영역은 ${expectedQuestionCount}개여야 하지만 ${explanationCount}개입니다.`);
   }
+  const emptyQuestionGroups = endnotes.filter((note) => {
+    let anchor = note.parentElement;
+    while (anchor && localName(anchor) !== "p") anchor = anchor.parentElement;
+    if (!anchor) return true;
+    const group = [anchor];
+    let sibling = anchor.nextElementSibling;
+    while (sibling && !firstDescendant(sibling, "endNote")) {
+      group.push(sibling);
+      sibling = sibling.nextElementSibling;
+    }
+    return !hasQuestionContent(group);
+  });
+  if (emptyQuestionGroups.length) {
+    errors.push(`문제 본문이 비어 있는 문항이 ${emptyQuestionGroups.length}개입니다.`);
+  }
 
   const unresolvedFields = [];
   const watermarkArtifacts = [];
@@ -644,6 +738,14 @@ export async function validateGeneratedExamHwpx(
   ));
   if (choiceNumberPictures.length) {
     errors.push(`선택지 번호 그림이 ${choiceNumberPictures.length}개 남았습니다.`);
+  }
+  const visibleChoiceNumberCount = sectionDocuments.reduce((sum, documentNode) => (
+    sum + descendants(documentNode.documentElement, "t")
+      .filter(paragraphOutsideEndnote)
+      .reduce((count, node) => count + ((node.textContent || "").match(CIRCLED_CHOICE_RE)?.length || 0), 0)
+  ), 0);
+  if (expectedChoiceNumberCount != null && visibleChoiceNumberCount !== expectedChoiceNumberCount) {
+    errors.push(`선택지 번호는 ${expectedChoiceNumberCount}개여야 하지만 ${visibleChoiceNumberCount}개입니다.`);
   }
   const strayEndnoteNumbers = sectionDocuments.flatMap((documentNode) => (
     descendants(documentNode.documentElement, "autoNum").filter((autoNumber) => {
@@ -687,8 +789,29 @@ export async function validateGeneratedExamHwpx(
         equation.getAttribute("baseUnit") !== "100"
         || (equation.getAttribute("textColor") || "").toUpperCase() !== "#FFFFFF"
       ));
+      const hiddenPictures = endnotes.flatMap((note) => descendants(note, "pic"));
+      const hiddenTables = endnotes.flatMap((note) => descendants(note, "tbl"));
+      const expandedNotes = endnotes.filter((note) => descendants(note, "p").length > 2);
+      const residualNotes = endnotes.filter((note) => {
+        const clone = note.cloneNode(true);
+        descendants(clone, "t").forEach((node) => {
+          node.textContent = (node.textContent || "").replaceAll("[정답]", "").replaceAll("[해설]", "");
+        });
+        return Boolean(
+          textOf(clone)
+          || descendants(clone, "equation").length
+          || descendants(clone, "pic").length
+          || descendants(clone, "tbl").length
+        );
+      });
       if (visibleRuns.length || visibleMarkers.length || visibleEquations.length) {
         errors.push("미주 숨김 서식(1pt·흰색)이 일부 미주 내용 또는 번호 표식에 적용되지 않았습니다.");
+      }
+      if (hiddenPictures.length || hiddenTables.length) {
+        errors.push(`숨긴 미주에 그림 ${hiddenPictures.length}개와 표 ${hiddenTables.length}개가 남았습니다.`);
+      }
+      if (expandedNotes.length || residualNotes.length) {
+        errors.push(`숨긴 미주가 충분히 축약되지 않은 문항이 ${Math.max(expandedNotes.length, residualNotes.length)}개입니다.`);
       }
     }
     const manifest = firstDescendant(contentDocument.documentElement, "manifest");
@@ -717,6 +840,7 @@ export async function validateGeneratedExamHwpx(
     answerCount,
     endnoteCount: endnotes.length,
     explanationCount,
+    visibleChoiceNumberCount,
     sectionCount: sectionNames.length,
   };
 }
@@ -764,6 +888,7 @@ export async function buildExamFromTemplateHwpx(
   if (selectedQuestions.length !== selectedOrdinals.length) {
     throw new Error("선택 문항 일부를 문제은행 분석 결과에서 찾지 못했습니다.");
   }
+  selectedQuestions.forEach(assertQuestionReady);
   const allSlotRecords = [];
   const sequentialRecords = [];
   const explanationRecords = [];
@@ -816,6 +941,10 @@ export async function buildExamFromTemplateHwpx(
     }
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
     clones.forEach((clone) => removeLayoutControls(clone));
+    trimTrailingEmptyQuestionElements(clones);
+    if (!clones.length || !hasQuestionContent(clones)) {
+      throw new Error(`${question.sourceLabel || question.ordinal}의 정리된 문제 본문이 비어 있습니다.`);
+    }
     ensureLeftParagraphStyles(sourceHeaderDocument, clones);
     return clones;
   };
@@ -1059,6 +1188,7 @@ export async function buildExamFromSourcesHwpx(
 ) {
   if (!sources.length || !selectedQuestions.length) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
   if (!["original", "short", "essay"].includes(transformMode)) throw new Error("지원하지 않는 문항 변환 형식입니다.");
+  selectedQuestions.forEach(assertQuestionReady);
 
   const firstSource = sources.find((source) => source.id === selectedQuestions[0].fileCode) || sources[0];
   const orderedSources = [firstSource, ...sources.filter((source) => source !== firstSource)];
@@ -1152,6 +1282,10 @@ export async function buildExamFromSourcesHwpx(
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
     transformQuestionClones(clones, question, targetDocument, transformMode);
     clones.forEach((clone) => removeLayoutControls(clone));
+    trimTrailingEmptyQuestionElements(clones);
+    if (!clones.length || !hasQuestionContent(clones)) {
+      throw new Error(`${question.code}의 정리된 문제 본문이 비어 있습니다.`);
+    }
     remapCloneReferences(clones, context);
     ensureLeftParagraphStyles(outputHeader, clones);
     return clones;

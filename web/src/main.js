@@ -821,6 +821,10 @@ async function buildAllExams() {
         await validateGeneratedExamHwpx(bytes, {
           expectedQuestionCount: codes.length,
           expectedEndnoteCount: codes.length,
+          expectedChoiceNumberCount: variant === "problem"
+            ? selectedQuestions.filter((question) => question.answerType === "multiple_choice").length
+              * (transformMode === "original" ? 5 : 0)
+            : null,
           expectHiddenEndnotes: hideEndnotes,
         });
         await rhwpReady;
