@@ -15,6 +15,11 @@ export function convertedHwpxName(filename) {
   return String(filename || "document.hwp").replace(/\.hwp$/i, ".hwpx");
 }
 
+export function bankPreviewBytes(record) {
+  if (record?.convertedFromHwp && record.sourceBytes?.length) return record.sourceBytes;
+  return record?.bytes || null;
+}
+
 export function detectBankFormat(bytes) {
   if (bytes.length >= 8
     && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0

@@ -3,7 +3,12 @@ import rhwpWasmUrl from "@rhwp/core/rhwp_bg.wasm?url";
 import JSZip from "jszip";
 import "./styles.css";
 import { parseHwpx, prepareHwpxForPreview } from "./parser.js";
-import { isLegacyHwpFile, isSupportedBankFile, normalizeBankFile } from "./hwp-converter.js";
+import {
+  bankPreviewBytes,
+  isLegacyHwpFile,
+  isSupportedBankFile,
+  normalizeBankFile,
+} from "./hwp-converter.js";
 import { applyTemplateFieldValues, inspectTemplateFields } from "./template-fields.js";
 import {
   buildExamFromSourcesHwpx,
@@ -193,7 +198,10 @@ async function activatePreviewFile(code) {
   elements.pageLoading.classList.remove("hidden");
   elements.pageCanvas.classList.add("hidden");
   try {
-    const previewBytes = await prepareHwpxForPreview(record.bytes);
+    const sourcePreviewBytes = bankPreviewBytes(record);
+    const previewBytes = record.convertedFromHwp
+      ? sourcePreviewBytes
+      : await prepareHwpxForPreview(sourcePreviewBytes);
     await rhwpReady;
     if (request !== previewRequest) return;
     documentViewer?.free?.();

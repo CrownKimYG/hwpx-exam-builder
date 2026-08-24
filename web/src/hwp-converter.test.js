@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import JSZip from "jszip";
 import {
+  bankPreviewBytes,
   convertedHwpxName,
   detectBankFormat,
   hwpConversionError,
@@ -9,6 +10,21 @@ import {
   normalizeBankFile,
   normalizeConvertedHwpx,
 } from "./hwp-converter.js";
+
+test("HWP 미리보기는 변환 HWPX가 아니라 원본 HWP 바이트를 사용한다", () => {
+  const sourceBytes = new Uint8Array([1, 2, 3]);
+  const convertedBytes = new Uint8Array([4, 5, 6]);
+  assert.equal(bankPreviewBytes({
+    bytes: convertedBytes,
+    sourceBytes,
+    convertedFromHwp: true,
+  }), sourceBytes);
+  assert.equal(bankPreviewBytes({
+    bytes: convertedBytes,
+    sourceBytes,
+    convertedFromHwp: false,
+  }), convertedBytes);
+});
 
 test("HWP와 HWPX 문제은행 파일만 선택한다", () => {
   assert.equal(isSupportedBankFile({ name: "bank.hwp" }), true);
