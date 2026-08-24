@@ -39,6 +39,57 @@ function clusterComponents(components) {
   return clusters;
 }
 
+function candidateGroups(cluster) {
+  const ordered = [...cluster].sort((left, right) => left.x1 - right.x1 || left.y1 - right.y1);
+  const groups = [ordered];
+  for (let length = 5; length <= Math.min(13, ordered.length); length += 1) {
+    for (let start = 0; start + length <= ordered.length; start += 1) {
+      const group = ordered.slice(start, start + length);
+      const isContinuous = group.slice(1).every((component, index) => {
+        const gap = componentGap(group[index], component);
+        return gap.horizontal <= 8 && gap.vertical <= 2;
+      });
+      if (isContinuous) groups.push(group);
+    }
+  }
+  return groups;
+}
+
+function candidateBox(parts) {
+  const x1 = Math.min(...parts.map((item) => item.x1));
+  const y1 = Math.min(...parts.map((item) => item.y1));
+  const x2 = Math.max(...parts.map((item) => item.x2));
+  const y2 = Math.max(...parts.map((item) => item.y2));
+  const width = x2 - x1;
+  const height = y2 - y1;
+  const area = parts.reduce((sum, item) => sum + item.area, 0);
+  return {
+    x1,
+    y1,
+    x2,
+    y2,
+    width,
+    height,
+    aspect: width / Math.max(1, height),
+    density: area / Math.max(1, width * height),
+    parts: parts.length,
+  };
+}
+
+function isWatermarkCandidate(box, imageWidth) {
+  return (
+    box.width >= 120
+    && box.width <= Math.min(240, imageWidth * 0.62)
+    && box.height >= 12
+    && box.height <= 42
+    && box.aspect >= 4.3
+    && box.aspect <= 9.5
+    && box.density >= 0.24
+    && box.parts >= 5
+    && box.parts <= 13
+  );
+}
+
 /**
  * 족보 이미지에 반복 삽입된 굵은 `zocbo.com` 글자의 픽셀 군집을 찾는다.
  * 워터마크 위치와 관계없이 비율, 글자 군집 수와 밀도를 모두 만족하는
@@ -106,31 +157,15 @@ export function findZocboWatermarkBounds({ data, width, height }) {
     }
   }
 
-  const candidates = clusterComponents(components).map((cluster) => {
-    const x1 = Math.min(...cluster.map((item) => item.x1));
-    const y1 = Math.min(...cluster.map((item) => item.y1));
-    const x2 = Math.max(...cluster.map((item) => item.x2));
-    const y2 = Math.max(...cluster.map((item) => item.y2));
-    const boxWidth = x2 - x1;
-    const boxHeight = y2 - y1;
-    const area = cluster.reduce((sum, item) => sum + item.area, 0);
-    const aspect = boxWidth / Math.max(1, boxHeight);
-    const density = area / Math.max(1, boxWidth * boxHeight);
-    return { x1, y1, x2, y2, width: boxWidth, height: boxHeight, aspect, density, parts: cluster.length };
-  }).filter((box) => (
-    box.width >= Math.max(80, width * 0.2)
-    && box.width <= Math.min(240, width * 0.62)
-    && box.height >= 12
-    && box.height <= 42
-    && box.aspect >= 4.3
-    && box.aspect <= 9.5
-    && box.density >= 0.24
-    && box.parts >= 5
-    && box.parts <= 13
-  ));
+  const candidates = clusterComponents(components)
+    .flatMap(candidateGroups)
+    .map(candidateBox)
+    .filter((box) => isWatermarkCandidate(box, width));
   if (!candidates.length) return null;
   candidates.sort((left, right) => (
-    Math.abs(left.aspect - 6.2) - Math.abs(right.aspect - 6.2)
+    Math.abs(left.parts - 8) - Math.abs(right.parts - 8)
+    || right.width - left.width
+    || Math.abs(left.aspect - 6.2) - Math.abs(right.aspect - 6.2)
     || right.density - left.density
     || right.y1 - left.y1
   ));

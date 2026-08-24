@@ -55,6 +55,28 @@ test("이미지 어느 위치의 zocbo.com 형태 글자 군집도 찾는다", (
   });
 });
 
+test("인접한 도형 라벨은 제외하고 zocbo.com 부분군집만 찾는다", () => {
+  const fixture = image(548, 418);
+  const endX = fillWatermark(fixture, 369, 395);
+  const labelX = endX + 4;
+  fixture.fill(labelX, 376, 24, 42);
+
+  const bounds = findZocboWatermarkBounds(fixture);
+  assert.ok(bounds);
+  assert.ok(bounds.x <= 369);
+  assert.ok(bounds.x + bounds.width >= endX - 2);
+  assert.ok(bounds.x + bounds.width < labelX);
+});
+
+test("넓은 이미지의 고정 크기 zocbo.com도 찾는다", () => {
+  const fixture = image(900, 600);
+  const endX = fillWatermark(fixture, 100, 220);
+  const bounds = findZocboWatermarkBounds(fixture);
+  assert.ok(bounds);
+  assert.ok(bounds.x <= 100);
+  assert.ok(bounds.x + bounds.width >= endX - 2);
+});
+
 test("하단에 있어도 짧은 도형 캡션은 워터마크로 판단하지 않는다", () => {
   const fixture = image(500, 620);
   fixture.fill(180, 580, 90, 24);
