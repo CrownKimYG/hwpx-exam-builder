@@ -26,6 +26,7 @@ def test_web_uses_order_input_and_optional_template() -> None:
 
     assert 'id="question-order"' in html
     assert 'id="hide-endnotes"' in html
+    assert '<link rel="stylesheet" href="./src/styles.css"' in html
     assert "문항 미리보기" not in html
     assert "dragenter" in main_js and "drop" in main_js
     assert "selectedOrdinals.join" in main_js
