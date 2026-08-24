@@ -1,6 +1,8 @@
 import JSZip from "jszip";
+import { difficultyFromLabel } from "./bank-model.js";
 
 const TITLE_RE = /❙\s*(예제|유제|기초연습|기본연습|실력완성)\s*(\d+)\s*(유사유형)?/;
+const DIFFICULTY_RE = /(예제|유제|기초(?:연습)?|기본(?:연습)?|실력(?:완성)?)/;
 const CHOICE_PARAGRAPH_IDS = new Set(["6", "16"]);
 const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const WATERMARK_SUFFIX_RE = /(?:^|\r?\n)\s*from\s*\r?\n\s*={20,}[\s\S]*$/i;
@@ -239,10 +241,11 @@ export async function parseHwpx(file) {
       .filter((item) => item.note);
     const metadata = anchors.map(({ index }, position) => {
       const lowerBound = position > 0 ? anchors[position - 1].index + 1 : 0;
+      let title = null;
       for (let candidate = index - 1; candidate >= lowerBound; candidate -= 1) {
         const match = plainText(children[candidate], { skipNotes: true }).match(TITLE_RE);
         if (match) {
-          return {
+          title = {
             start: candidate,
             contentStart: candidate + 1,
             hasTitle: true,
@@ -250,15 +253,30 @@ export async function parseHwpx(file) {
             type: match[1],
             number: Number(match[2]),
           };
+          break;
         }
       }
-      return {
+      let difficultyLabel = "";
+      for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
+        const match = plainText(children[candidate], { skipNotes: true }).match(DIFFICULTY_RE);
+        if (match) {
+          difficultyLabel = match[1];
+          break;
+        }
+      }
+      const fallback = {
         start: index,
         contentStart: index,
         hasTitle: false,
         label: `문항 ${questions.length + position + 1}`,
         type: "미분류",
         number: 0,
+      };
+      const resolved = title || fallback;
+      return {
+        ...resolved,
+        difficultyLabel: difficultyLabel || resolved.type,
+        difficulty: difficultyFromLabel(difficultyLabel || resolved.type),
       };
     });
 
@@ -277,6 +295,15 @@ export async function parseHwpx(file) {
       const contentStart = Math.min(meta.contentStart, end);
       const block = children.slice(meta.start, end);
       const bodyElements = block.map(withoutEndnotes);
+      const choiceElementIndexes = children
+        .map((element, childIndex) => ({ element, childIndex }))
+        .filter(({ element, childIndex }) => (
+          childIndex >= contentStart
+          && childIndex < end
+          && localName(element) === "p"
+          && CHOICE_PARAGRAPH_IDS.has(element.getAttribute("paraPrIDRef"))
+        ))
+        .map(({ childIndex }) => childIndex);
       const noteParagraphs = descendants(note, "p");
       const answerParagraph = noteParagraphs.find((p) => plainText(p).includes("[정답]")) || noteParagraphs[0] || note;
       const explanationStart = noteParagraphs.findIndex((p) => plainText(p).includes("[해설]"));
@@ -293,7 +320,7 @@ export async function parseHwpx(file) {
       const answerXml = serializeWrapper("answer", [answerParagraph]);
       const explanationXml = serializeWrapper("explanation", explanationParagraphs);
       const fullXml = formatXml(
-        `<questionBlock ordinal="${questions.length + 1}" sourceLabel="${meta.label}" answerType="${answerType}" answerValue="${answer ?? ""}">${bodyXml}${answerXml}${explanationXml}</questionBlock>`
+        `<questionBlock ordinal="${questions.length + 1}" sourceLabel="${meta.label}" difficulty="${meta.difficulty}" answerType="${answerType}" answerValue="${answer ?? ""}">${bodyXml}${answerXml}${explanationXml}</questionBlock>`
       );
       const questionElements = children
         .slice(contentStart, end)
@@ -309,6 +336,8 @@ export async function parseHwpx(file) {
         sourceLabel: meta.label,
         sourceType: meta.type,
         sourceNumber: meta.number,
+        difficultyLabel: meta.difficultyLabel,
+        difficulty: meta.difficulty,
         sectionName,
         anchorIndex,
         titleStart: meta.hasTitle ? meta.start : null,
@@ -320,9 +349,11 @@ export async function parseHwpx(file) {
         answerType,
         answer,
         choiceCount: choiceRefs.length,
+        choiceElementIndexes,
         warnings,
         questionElements,
         choices: choiceFragments(block),
+        answerElement: answerParagraph,
         explanationElements: explanationParagraphs,
         questionText: textFromElements(questionElements, { skipNotes: true, equationMode: "placeholder" }),
         answerText: plainText(answerParagraph, { equationMode: "placeholder" }).replace("[정답]", "").trim(),

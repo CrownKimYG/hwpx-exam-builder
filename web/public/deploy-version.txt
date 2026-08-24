@@ -1,1 +1,1 @@
-template-slots-v2
+multi-bank-v2

@@ -31,4 +31,5 @@ jobs:
         with:
           runtime: node@24
           cache: true
+      - run: pnpm test
       - run: pnpm build

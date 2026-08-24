@@ -241,11 +241,11 @@ function appendTemplateCollections(sourceDocument, templateDocument, maps, fontM
   }
 }
 
-function uniqueBinaryId(sourceManifest, preferred) {
+function uniqueBinaryId(sourceManifest, preferred, prefix = "tpl") {
   const used = new Set(descendants(sourceManifest, "item").map((item) => item.getAttribute("id")).filter(Boolean));
-  let candidate = `tpl_${preferred}`;
+  let candidate = `${prefix}_${preferred}`;
   let suffix = 2;
-  while (used.has(candidate)) candidate = `tpl_${preferred}_${suffix++}`;
+  while (used.has(candidate)) candidate = `${prefix}_${preferred}_${suffix++}`;
   return candidate;
 }
 
@@ -728,4 +728,325 @@ export async function buildExamFromTemplateHwpx(
     overrides.set(sectionName, new XMLSerializer().serializeToString(documentNode));
   }
   return createOutputZip(sourceZip, overrides, additions, templateSectionNames, keptBinaryPaths);
+}
+
+async function importPackageBinaryItems(targetContentDocument, incomingZip, incomingContentDocument, prefix) {
+  const targetManifest = firstDescendant(targetContentDocument.documentElement, "manifest");
+  const incomingManifest = firstDescendant(incomingContentDocument.documentElement, "manifest");
+  const binaryMap = new Map();
+  const additions = new Map();
+  if (!targetManifest || !incomingManifest) return { binaryMap, additions };
+
+  for (const item of directChildrenByName(incomingManifest, "item")) {
+    const href = item.getAttribute("href") || "";
+    if (!href.startsWith("BinData/")) continue;
+    const oldId = item.getAttribute("id") || href.split("/").pop().split(".")[0];
+    const entry = incomingZip.file(href);
+    if (!entry) continue;
+    const newId = uniqueBinaryId(targetManifest, oldId, prefix);
+    const extension = href.includes(".") ? href.slice(href.lastIndexOf(".")) : "";
+    const newHref = `BinData/${newId}${extension}`;
+    const clone = targetContentDocument.importNode(item, true);
+    clone.setAttribute("id", newId);
+    clone.setAttribute("href", newHref);
+    targetManifest.appendChild(clone);
+    binaryMap.set(oldId, newId);
+    additions.set(newHref, await entry.async("uint8array"));
+  }
+  return { binaryMap, additions };
+}
+
+function emptyReferenceMaps() {
+  return { maps: {}, fontMaps: new Map(), binaryMap: new Map() };
+}
+
+function paragraphOutsideEndnote(element) {
+  let ancestor = element.parentElement;
+  while (ancestor) {
+    if (localName(ancestor) === "endNote") return false;
+    ancestor = ancestor.parentElement;
+  }
+  return true;
+}
+
+function actualChoiceNodes(question) {
+  if (question.answerType !== "multiple_choice") return [];
+  const index = Number(question.answer) - 1;
+  if (!Number.isInteger(index) || index < 0 || !question.choices?.[index]?.length) {
+    throw new Error(`${question.code || question.sourceLabel || question.ordinal}의 실제 정답 선택지를 찾지 못했습니다.`);
+  }
+  return question.choices[index];
+}
+
+function answerParagraph(elements) {
+  const notes = elements.flatMap((element) => descendants(element, "endNote"));
+  return notes.flatMap((note) => descendants(note, "p"))
+    .find((paragraph) => textOf(paragraph).includes("[정답]")) || null;
+}
+
+function replaceAnswerWithActualChoice(elements, question, targetDocument) {
+  const paragraph = answerParagraph(elements);
+  if (!paragraph) throw new Error(`${question.code || question.ordinal}의 [정답] 문단을 찾지 못했습니다.`);
+  descendants(paragraph, "pic").forEach((node) => node.remove());
+  descendants(paragraph, "equation").forEach((node) => node.remove());
+  const textNodes = descendants(paragraph, "t");
+  let labelNode = textNodes.find((node) => (node.textContent || "").includes("[정답]")) || textNodes[0];
+  if (!labelNode) throw new Error(`${question.code || question.ordinal}의 정답 입력 위치를 찾지 못했습니다.`);
+  labelNode.textContent = "[정답] ";
+  textNodes.forEach((node) => { if (node !== labelNode) node.textContent = ""; });
+  let run = labelNode.parentElement;
+  while (run && localName(run) !== "run") run = run.parentElement;
+  if (!run) throw new Error(`${question.code || question.ordinal}의 정답 글자 서식을 찾지 못했습니다.`);
+  actualChoiceNodes(question).forEach((node) => run.appendChild(targetDocument.importNode(node, true)));
+}
+
+function createTextRun(documentNode, prototype, value) {
+  const runPrototype = firstDescendant(prototype, "run");
+  const prefix = prototype.prefix || "hp";
+  const run = runPrototype
+    ? documentNode.importNode(runPrototype, false)
+    : documentNode.createElementNS(prototype.namespaceURI, `${prefix}:run`);
+  const text = documentNode.createElementNS(prototype.namespaceURI, `${prefix}:t`);
+  text.textContent = value;
+  run.appendChild(text);
+  return run;
+}
+
+function cleanTextParagraph(documentNode, prototype, value, { pageBreak = false } = {}) {
+  const paragraph = documentNode.importNode(prototype, false);
+  paragraph.setAttribute("pageBreak", pageBreak ? "1" : "0");
+  paragraph.setAttribute("columnBreak", "0");
+  paragraph.appendChild(createTextRun(documentNode, prototype, value));
+  return paragraph;
+}
+
+function rewriteEssayEnding(clones, targetDocument) {
+  const paragraphs = clones.flatMap((element) => (
+    localName(element) === "p" ? [element, ...descendants(element, "p")] : descendants(element, "p")
+  )).filter(paragraphOutsideEndnote);
+  const target = [...paragraphs].reverse().find((paragraph) => textOf(paragraph));
+  if (!target) return;
+  const textNodes = descendants(target, "t").filter(paragraphOutsideEndnote);
+  const last = [...textNodes].reverse().find((node) => (node.textContent || "").trim());
+  if (last) {
+    const original = last.textContent || "";
+    const rewritten = original
+      .replace(/([을를])\s*구하시오\s*[.]?\s*$/, "$1 구하는 과정을 서술하시오.")
+      .replace(/의\s*값은\s*[?？]\s*$/, "의 값을 구하는 과정을 서술하시오.");
+    if (rewritten !== original) {
+      last.textContent = rewritten;
+      return;
+    }
+  }
+  const topLevel = clones.findLast((element) => localName(element) === "p") || target;
+  clones.push(cleanTextParagraph(targetDocument, topLevel, "정답을 구하는 과정을 서술하시오."));
+}
+
+function transformQuestionClones(clones, question, targetDocument, transformMode) {
+  if (transformMode === "original") return;
+  if (question.answerType === "multiple_choice") replaceAnswerWithActualChoice(clones, question, targetDocument);
+  if (transformMode === "essay") rewriteEssayEnding(clones, targetDocument);
+}
+
+function remapCloneReferences(clones, context) {
+  clones.forEach((clone) => remapReferences(clone, context.maps, context.fontMaps, context.binaryMap));
+}
+
+function solutionParagraphs(question, targetDocument, context, outputIndex, transformMode) {
+  const answer = targetDocument.importNode(question.answerElement, true);
+  const explanation = (question.explanationElements || []).map((element) => targetDocument.importNode(element, true));
+  const result = [answer, ...explanation];
+  if (transformMode !== "original" && question.answerType === "multiple_choice") {
+    const wrapper = targetDocument.createElement("wrapper");
+    const note = targetDocument.createElement("endNote");
+    result.forEach((paragraph) => note.appendChild(paragraph));
+    wrapper.appendChild(note);
+    replaceAnswerWithActualChoice([wrapper], question, targetDocument);
+    result.forEach((paragraph) => note.removeChild(paragraph));
+  }
+  const answerText = descendants(answer, "t").find((node) => (node.textContent || "").includes("[정답]"));
+  if (answerText) answerText.textContent = answerText.textContent.replace("[정답]", `${outputIndex}. 정답`);
+  const explanationText = explanation.flatMap((paragraph) => descendants(paragraph, "t"))
+    .find((node) => (node.textContent || "").includes("[해설]"));
+  if (explanationText) explanationText.textContent = explanationText.textContent.replace("[해설]", "해설");
+  result.forEach((paragraph) => removeLayoutControls(paragraph));
+  remapCloneReferences(result, context);
+  return result;
+}
+
+function addSolutionsAppendix(templateSections, explanationRecords, selectedQuestions, sourceContexts, transformMode) {
+  let targetRecord = explanationRecords[0] || null;
+  explanationRecords.slice(targetRecord ? 1 : 0).forEach((record) => clearSlotMarker(record.element));
+  let targetDocument;
+  let parent;
+  let insertionPoint;
+  if (targetRecord) {
+    replaceParagraphText(targetRecord.element, "해설");
+    targetDocument = targetRecord.documentNode;
+    parent = targetRecord.element.parentNode;
+    insertionPoint = targetRecord.element.nextSibling;
+  } else {
+    const lastEntry = [...templateSections.entries()].at(-1);
+    if (!lastEntry) throw new Error("해설을 추가할 템플릿 section을 찾지 못했습니다.");
+    targetDocument = lastEntry[1];
+    parent = targetDocument.documentElement;
+    const prototype = [...parent.children].reverse().find((element) => localName(element) === "p");
+    if (!prototype) throw new Error("해설 제목 서식을 만들 기준 문단이 없습니다.");
+    const heading = cleanTextParagraph(targetDocument, prototype, "해설", { pageBreak: true });
+    parent.appendChild(heading);
+    insertionPoint = null;
+  }
+  selectedQuestions.forEach((question, index) => {
+    const context = sourceContexts.get(question.fileCode);
+    solutionParagraphs(question, targetDocument, context, index + 1, transformMode)
+      .forEach((paragraph) => parent.insertBefore(paragraph, insertionPoint));
+  });
+}
+
+/**
+ * 여러 HWPX 문제은행의 선택 문항을 하나의 템플릿에 조립한다.
+ * 첫 선택 문항의 패키지를 출력 기반으로 사용하고 다른 원본의 서식과 BinData는 ID를 다시 매핑한다.
+ */
+export async function buildExamFromSourcesHwpx(
+  sources,
+  templateBytes,
+  selectedQuestions,
+  { hideEndnotes = false, transformMode = "original", includeSolutions = false } = {},
+) {
+  if (!sources.length || !selectedQuestions.length) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
+  if (!["original", "short", "essay"].includes(transformMode)) throw new Error("지원하지 않는 문항 변환 형식입니다.");
+
+  const firstSource = sources.find((source) => source.id === selectedQuestions[0].fileCode) || sources[0];
+  const orderedSources = [firstSource, ...sources.filter((source) => source !== firstSource)];
+  const sourceContexts = new Map();
+  for (const source of orderedSources) {
+    const zip = await JSZip.loadAsync(source.bytes, { checkCRC32: true });
+    const headerEntry = zip.file("Contents/header.xml");
+    const contentEntry = zip.file("Contents/content.hpf");
+    if (!headerEntry || !contentEntry) throw new Error(`${source.id} 문제은행의 header.xml 또는 content.hpf가 없습니다.`);
+    const headerDocument = parseXml(await headerEntry.async("string"), `${source.id} header.xml`);
+    const contentDocument = parseXml(await contentEntry.async("string"), `${source.id} content.hpf`);
+    const sectionDocuments = new Map();
+    const neededSections = new Set(selectedQuestions.filter((question) => question.fileCode === source.id).map((question) => question.sectionName));
+    for (const sectionName of neededSections) {
+      const entry = zip.file(sectionName);
+      if (!entry) throw new Error(`${source.id}의 ${sectionName}을 찾지 못했습니다.`);
+      sectionDocuments.set(sectionName, parseXml(await entry.async("string"), `${source.id} ${sectionName}`));
+    }
+    sourceContexts.set(source.id, { source, zip, headerDocument, contentDocument, sectionDocuments, ...emptyReferenceMaps() });
+  }
+
+  const foundation = sourceContexts.get(firstSource.id);
+  const outputZip = foundation.zip;
+  const outputHeader = foundation.headerDocument;
+  const outputContent = foundation.contentDocument;
+  const additions = new Map();
+
+  for (const source of orderedSources.slice(1)) {
+    const context = sourceContexts.get(source.id);
+    const imported = await importPackageBinaryItems(outputContent, context.zip, context.contentDocument, `src_${source.id}`);
+    context.binaryMap = imported.binaryMap;
+    imported.additions.forEach((bytes, path) => additions.set(path, bytes));
+    context.maps = planCollectionMaps(outputHeader, context.headerDocument);
+    context.fontMaps = mergeFonts(outputHeader, context.headerDocument, context.binaryMap);
+    appendTemplateCollections(outputHeader, context.headerDocument, context.maps, context.fontMaps, context.binaryMap);
+  }
+
+  const templateZip = await JSZip.loadAsync(templateBytes, { checkCRC32: true });
+  const templateHeaderEntry = templateZip.file("Contents/header.xml");
+  const templateContentEntry = templateZip.file("Contents/content.hpf");
+  if (!templateHeaderEntry || !templateContentEntry) throw new Error("템플릿의 header.xml 또는 content.hpf가 없습니다.");
+  const templateHeader = parseXml(await templateHeaderEntry.async("string"), "템플릿 header.xml");
+  const templateContent = parseXml(await templateContentEntry.async("string"), "템플릿 content.hpf");
+  const templateSectionNames = Object.keys(templateZip.files).filter((name) => SECTION_RE.test(name)).sort();
+  if (!templateSectionNames.length) throw new Error("템플릿 본문 section을 찾지 못했습니다.");
+  const templateBinaries = await importPackageBinaryItems(outputContent, templateZip, templateContent, "tpl");
+  templateBinaries.additions.forEach((bytes, path) => additions.set(path, bytes));
+  const templateMaps = planCollectionMaps(outputHeader, templateHeader);
+  const templateFontMaps = mergeFonts(outputHeader, templateHeader, templateBinaries.binaryMap);
+  appendTemplateCollections(outputHeader, templateHeader, templateMaps, templateFontMaps, templateBinaries.binaryMap);
+  outputHeader.documentElement.setAttribute("secCnt", String(templateSectionNames.length));
+
+  const allSlotRecords = [];
+  const sequentialRecords = [];
+  const explanationRecords = [];
+  const templateSections = new Map();
+  for (const sectionName of templateSectionNames) {
+    const documentNode = parseXml(await templateZip.file(sectionName).async("string"), sectionName);
+    trimAfterLastPageMarker(documentNode);
+    remapReferences(documentNode.documentElement, templateMaps, templateFontMaps, templateBinaries.binaryMap);
+    findSlots(documentNode.documentElement).forEach((slot) => allSlotRecords.push({ sectionName, ...slot, documentNode }));
+    findSequentialMarkers(documentNode.documentElement).forEach((element) => sequentialRecords.push({ sectionName, element, documentNode }));
+    findExplanationMarkers(documentNode.documentElement).forEach((element) => explanationRecords.push({ sectionName, element, documentNode }));
+    templateSections.set(sectionName, documentNode);
+  }
+
+  const slotRecords = canonicalSlots(allSlotRecords);
+  const canonicalElements = new Set(slotRecords.map((slot) => slot.element));
+  allSlotRecords.filter((slot) => !canonicalElements.has(slot.element)).forEach((slot) => clearSlotMarker(slot.element));
+  const sequentialRecord = slotRecords.length ? null : sequentialRecords[0] || null;
+  sequentialRecords.slice(sequentialRecord ? 1 : 0).forEach((record) => clearSlotMarker(record.element));
+  if (!slotRecords.length && !sequentialRecord) throw new Error("템플릿에서 #1 슬롯 또는 {{QUESTIONS}} 삽입 지점을 찾지 못했습니다.");
+  if (!sequentialRecord && selectedQuestions.length > slotRecords.length) {
+    throw new Error(`선택 문항 ${selectedQuestions.length}개에 비해 템플릿 슬롯은 ${slotRecords.length}개뿐입니다.`);
+  }
+
+  const cloneQuestion = (question, targetDocument) => {
+    const context = sourceContexts.get(question.fileCode);
+    if (!context) throw new Error(`${question.fileCode} 문제은행 원문을 찾지 못했습니다.`);
+    const sourceDocument = context.sectionDocuments.get(question.sectionName);
+    if (!sourceDocument) throw new Error(`${question.code}의 ${question.sectionName}을 찾지 못했습니다.`);
+    const children = Array.from(sourceDocument.documentElement.children);
+    const contentStart = Number.isInteger(question.contentStart) ? question.contentStart : question.blockStart;
+    const contentEnd = Number.isInteger(question.contentEnd) ? question.contentEnd : question.blockEnd;
+    const removeChoices = transformMode !== "original" && question.answerType === "multiple_choice";
+    const sourceElements = children.slice(contentStart, contentEnd).filter((_, offset) => (
+      !removeChoices || !question.choiceElementIndexes?.includes(contentStart + offset)
+    ));
+    if (!sourceElements.length || !hasQuestionContent(sourceElements)) throw new Error(`${question.code}의 문제 본문이 비어 있습니다.`);
+    if (question.hasEndnote && countNamed(sourceElements, "endNote") === 0) throw new Error(`${question.code}의 정답·해설 미주가 누락됐습니다.`);
+    const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
+    transformQuestionClones(clones, question, targetDocument, transformMode);
+    clones.forEach((clone) => removeLayoutControls(clone));
+    remapCloneReferences(clones, context);
+    ensureLeftParagraphStyles(outputHeader, clones);
+    return clones;
+  };
+
+  if (sequentialRecord) {
+    clearSlotMarker(sequentialRecord.element);
+    const parent = sequentialRecord.element.parentNode;
+    const insertionPoint = sequentialRecord.element.nextSibling;
+    selectedQuestions.forEach((question) => cloneQuestion(question, sequentialRecord.documentNode)
+      .forEach((clone) => parent.insertBefore(clone, insertionPoint)));
+  } else {
+    slotRecords.forEach((slot, index) => {
+      const question = selectedQuestions[index];
+      if (!question) {
+        clearSlotMarker(slot.element);
+        return;
+      }
+      const parent = slot.element.parentNode;
+      cloneQuestion(question, slot.documentNode).forEach((clone) => parent.insertBefore(clone, slot.element));
+      parent.removeChild(slot.element);
+    });
+  }
+
+  if (includeSolutions) {
+    addSolutionsAppendix(templateSections, explanationRecords, selectedQuestions, sourceContexts, transformMode);
+  } else {
+    explanationRecords.forEach((record) => clearSlotMarker(record.element));
+  }
+  if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()]);
+
+  updateSectionsInContent(outputContent, templateSectionNames);
+  const keptBinaryPaths = pruneUnusedBinaryItems(outputContent, [outputHeader, ...templateSections.values()]);
+  const overrides = new Map([
+    ["Contents/header.xml", new XMLSerializer().serializeToString(outputHeader)],
+    ["Contents/content.hpf", new XMLSerializer().serializeToString(outputContent)],
+  ]);
+  templateSections.forEach((documentNode, sectionName) => {
+    overrides.set(sectionName, new XMLSerializer().serializeToString(documentNode));
+  });
+  return createOutputZip(outputZip, overrides, additions, templateSectionNames, keptBinaryPaths);
 }
