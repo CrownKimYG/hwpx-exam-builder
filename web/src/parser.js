@@ -224,7 +224,11 @@ export async function prepareHwpxForPreview(data) {
     descendants(documentNode.documentElement, "t").forEach((textNode) => {
       if ((textNode.textContent || "").trim().toLowerCase() === "zb") textNode.textContent = "";
     });
-    replaceChoiceNumberPictures(documentNode.documentElement);
+    // The preview must preserve source pictures exactly. Some HWP files use
+    // generic names such as `5.jpg` for ordinary artwork as well as for tiny
+    // choice labels, so a document-wide replacement can corrupt a header or
+    // logo. Choice-label normalization is applied later only to paragraphs
+    // that the parser has positively identified as choices.
     zip.file(sectionName, new XMLSerializer().serializeToString(documentNode));
   }));
 
@@ -236,6 +240,7 @@ export async function prepareHwpxForPreview(data) {
 }
 
 async function bytesForRef(zip, ref) {
+  if (!ref) return null;
   const prefix = `BinData/${ref}.`;
   const path = Object.keys(zip.files).find((name) => name.startsWith(prefix));
   return path ? zip.file(path).async("uint8array") : null;
@@ -278,6 +283,29 @@ export function hasChoiceParagraphMarker(choicePictureCount, text) {
   return choicePictureCount > 0 || CIRCLED_CHOICES.some((choice) => String(text || "").includes(choice));
 }
 
+export function splitChoiceMarkerText(value, startingNumber = null) {
+  const source = String(value || "");
+  const fragments = [];
+  const markers = [];
+  const markerPattern = /[①②③④⑤]/g;
+  let currentNumber = startingNumber;
+  let cursor = 0;
+  let match = markerPattern.exec(source);
+  while (match) {
+    if (currentNumber && match.index > cursor) {
+      fragments.push({ number: currentNumber, text: source.slice(cursor, match.index) });
+    }
+    currentNumber = CIRCLED_CHOICES.indexOf(match[0]) + 1;
+    markers.push(currentNumber);
+    cursor = match.index + match[0].length;
+    match = markerPattern.exec(source);
+  }
+  if (currentNumber && cursor < source.length) {
+    fragments.push({ number: currentNumber, text: source.slice(cursor) });
+  }
+  return { currentNumber, fragments, markers };
+}
+
 function isChoiceParagraph(paragraph) {
   if (localName(paragraph) !== "p") return false;
   const pictureCount = choicePictures(paragraph, { skipNotes: true }).length;
@@ -285,27 +313,55 @@ function isChoiceParagraph(paragraph) {
   return hasChoiceParagraphMarker(pictureCount, text);
 }
 
-function choiceFragments(block) {
-  const choices = [];
+function choiceRecords(block) {
+  const choices = Array.from({ length: CIRCLED_CHOICES.length }, () => []);
+  const markerNumbers = new Set();
+  const pictureRefs = Array(CIRCLED_CHOICES.length).fill(null);
+
+  const appendText = (nodes, source, value) => {
+    if (!nodes || !value) return;
+    const clone = source.cloneNode(false);
+    clone.textContent = value;
+    nodes.push(clone);
+  };
+
   block.forEach((paragraph) => {
     if (!isChoiceParagraph(paragraph)) return;
-    let current = null;
+    let currentNumber = null;
     function visit(node) {
       const name = localName(node);
-      if (name === "pic" && choiceNumberFromPicture(node)) {
-        current = [];
-        choices.push(current);
+      if (name === "endNote") return;
+      if (name === "pic") {
+        const number = choiceNumberFromPicture(node);
+        if (!number) return;
+        currentNumber = number;
+        markerNumbers.add(number);
+        const ref = firstDescendant(node, "img")?.getAttribute("binaryItemIDRef");
+        if (ref) pictureRefs[number - 1] = ref;
         return;
       }
-      if (current && (name === "t" || name === "equation" || name === "lineBreak")) {
-        current.push(node.cloneNode(true));
-        if (name !== "lineBreak") return;
+      if (name === "t") {
+        const split = splitChoiceMarkerText(node.textContent || "", currentNumber);
+        split.markers.forEach((number) => markerNumbers.add(number));
+        split.fragments.forEach((fragment) => {
+          appendText(choices[fragment.number - 1], node, fragment.text);
+        });
+        currentNumber = split.currentNumber;
+        return;
+      }
+      if (currentNumber && (name === "equation" || name === "lineBreak")) {
+        choices[currentNumber - 1].push(node.cloneNode(true));
+        return;
       }
       Array.from(node.children).forEach(visit);
     }
     visit(paragraph);
   });
-  return choices;
+  return {
+    choices,
+    choiceCount: markerNumbers.size,
+    pictureRefs,
+  };
 }
 
 export async function parseHwpx(file) {
@@ -400,15 +456,10 @@ export async function parseHwpx(file) {
       const answerParagraph = noteParagraphs.find((p) => plainText(p).includes("[정답]")) || noteParagraphs[0] || note;
       const explanationStart = noteParagraphs.findIndex((p) => plainText(p).includes("[해설]"));
       const explanationParagraphs = explanationStart >= 0 ? noteParagraphs.slice(explanationStart) : [];
-      const choiceRefs = block.flatMap((element) => {
-        if (!isChoiceParagraph(element)) return [];
-        return choicePictures(element, { skipNotes: true })
-          .map((picture) => firstDescendant(picture, "img")?.getAttribute("binaryItemIDRef"))
-          .filter(Boolean);
-      });
-      const [answerType, answer, warnings] = await answerValue(zip, answerParagraph, choiceRefs);
-      if (answerType === "multiple_choice" && choiceRefs.length !== 5) {
-        warnings.push(`객관식 선택지 번호 그림이 ${choiceRefs.length}개입니다.`);
+      const choiceData = choiceRecords(block);
+      const [answerType, answer, warnings] = await answerValue(zip, answerParagraph, choiceData.pictureRefs);
+      if (answerType === "multiple_choice" && choiceData.choiceCount !== 5) {
+        warnings.push(`객관식 선택지 번호가 ${choiceData.choiceCount}개입니다.`);
       }
       if (!hasContentAfterLabel([answerParagraph], "[정답]")) {
         warnings.push("[정답] 영역의 실제 내용이 비어 있습니다.");
@@ -449,11 +500,11 @@ export async function parseHwpx(file) {
         hasEndnote: true,
         answerType,
         answer,
-        choiceCount: choiceRefs.length,
+        choiceCount: choiceData.choiceCount,
         choiceElementIndexes,
         warnings,
         questionElements,
-        choices: choiceFragments(block),
+        choices: choiceData.choices,
         answerElement: answerParagraph,
         explanationElements: explanationParagraphs,
         questionText: textFromElements(questionElements, { skipNotes: true, equationMode: "placeholder" }),

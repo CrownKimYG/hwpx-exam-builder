@@ -5,6 +5,7 @@ import {
   findTrimmedContentEnd,
   hasChoiceParagraphMarker,
   normalizeEquationScript,
+  splitChoiceMarkerText,
 } from "./parser.js";
 
 test("removes the copyright watermark suffix embedded in an equation script", () => {
@@ -40,6 +41,22 @@ test("does not classify a problem stem as choices from its paragraph style alone
   assert.equal(hasChoiceParagraphMarker(0, "함수의 값은?"), false);
   assert.equal(hasChoiceParagraphMarker(1, ""), true);
   assert.equal(hasChoiceParagraphMarker(0, "① 2 ② 4"), true);
+});
+
+test("splits converted HWP Unicode choice markers into five ordered choices", () => {
+  const firstRow = splitChoiceMarkerText("① 2\t② 4");
+  const secondRow = splitChoiceMarkerText("③ 6\t④ 8", firstRow.currentNumber);
+  const lastRow = splitChoiceMarkerText("⑤ 10", secondRow.currentNumber);
+
+  assert.deepEqual(
+    [...firstRow.markers, ...secondRow.markers, ...lastRow.markers],
+    [1, 2, 3, 4, 5],
+  );
+  assert.deepEqual(
+    [...firstRow.fragments, ...secondRow.fragments, ...lastRow.fragments]
+      .map(({ number, text }) => [number, text.trim()]),
+    [[1, "2"], [2, "4"], [3, "6"], [4, "8"], [5, "10"]],
+  );
 });
 
 test("trims only empty paragraphs after the last question content", () => {

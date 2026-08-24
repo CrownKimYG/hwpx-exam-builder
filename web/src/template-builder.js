@@ -309,7 +309,7 @@ function updateSectionsInContent(sourceContentDocument, sectionNames) {
   });
 }
 
-function removeLayoutControls(element) {
+function removeLayoutControls(element, { normalizeChoicePictures = false } = {}) {
   descendants(element, "secPr").forEach((node) => node.remove());
   descendants(element, "colPr").forEach((node) => node.remove());
   // linesegarray caches coordinates for the source page. Once a paragraph is
@@ -328,10 +328,10 @@ function removeLayoutControls(element) {
   descendants(element, "t").forEach((textNode) => {
     if ((textNode.textContent || "").trim().toLowerCase() === "zb") textNode.textContent = "";
   });
-  // Some converted banks store ①–⑤ as tiny JPGs. Imported packages can
-  // contain duplicate/wrong bytes for those generic filenames, so make the
-  // visible choice labels deterministic and keep their size uniform.
-  replaceChoiceNumberPictures(element);
+  // Only confirmed choice paragraphs may normalize generic 1.jpg–5.jpg
+  // pictures. Applying this to an entire question can turn unrelated artwork
+  // (including a header image named 5.jpg) into the text character ⑤.
+  if (normalizeChoicePictures) replaceChoiceNumberPictures(element);
   const paragraphs = localName(element) === "p"
     ? [element, ...descendants(element, "p")]
     : descendants(element, "p");
@@ -509,6 +509,22 @@ function replaceParagraphText(paragraph, value) {
   textNodes.forEach((node, index) => { node.textContent = index === 0 ? value : ""; });
 }
 
+function setParagraphColumns(paragraph, columnCount, columnGap) {
+  descendants(paragraph, "colPr").forEach((column) => {
+    column.setAttribute("type", "NEWSPAPER");
+    column.setAttribute("layout", "LEFT");
+    column.setAttribute("colCount", String(columnCount));
+    column.setAttribute("sameSz", "1");
+    column.setAttribute("sameGap", String(columnGap));
+  });
+}
+
+function setQuestionPageBreak(elements, enabled) {
+  const firstParagraph = elements.find((element) => localName(element) === "p")
+    || elements.flatMap((element) => descendants(element, "p"))[0];
+  if (firstParagraph) firstParagraph.setAttribute("pageBreak", enabled ? "1" : "0");
+}
+
 function ensureHiddenEndnoteStyle(headerDocument) {
   const charProperties = findRefContainer(headerDocument, "charProperties");
   if (!charProperties) throw new Error("미주 숨김용 글자 서식을 추가할 charProperties를 찾지 못했습니다.");
@@ -636,6 +652,8 @@ export async function validateGeneratedExamHwpx(
     expectedQuestionCount = 0,
     expectedEndnoteCount = expectedQuestionCount,
     expectedChoiceNumberCount = null,
+    expectedQuestionPageBreakCount = null,
+    expectedSolutionColumnCount = null,
     expectHiddenEndnotes = false,
   } = {},
 ) {
@@ -705,6 +723,28 @@ export async function validateGeneratedExamHwpx(
   });
   if (emptyQuestionGroups.length) {
     errors.push(`문제 본문이 비어 있는 문항이 ${emptyQuestionGroups.length}개입니다.`);
+  }
+  const questionPageBreakCount = endnotes.filter((note) => {
+    let anchor = note.parentElement;
+    while (anchor && localName(anchor) !== "p") anchor = anchor.parentElement;
+    return anchor?.getAttribute("pageBreak") === "1";
+  }).length;
+  if (
+    expectedQuestionPageBreakCount != null
+    && questionPageBreakCount !== expectedQuestionPageBreakCount
+  ) {
+    errors.push(`문항 페이지 나눔은 ${expectedQuestionPageBreakCount}개여야 하지만 ${questionPageBreakCount}개입니다.`);
+  }
+  if (expectedSolutionColumnCount != null) {
+    const solutionHeading = sectionDocuments
+      .flatMap((documentNode) => descendants(documentNode.documentElement, "p"))
+      .find((paragraph) => textOf(paragraph) === "해설");
+    const solutionColumn = solutionHeading
+      ? descendants(solutionHeading, "colPr").at(-1)
+      : null;
+    if (solutionColumn?.getAttribute("colCount") !== String(expectedSolutionColumnCount)) {
+      errors.push(`해설 영역은 ${expectedSolutionColumnCount}단이어야 합니다.`);
+    }
   }
 
   const unresolvedFields = [];
@@ -840,6 +880,7 @@ export async function validateGeneratedExamHwpx(
     answerCount,
     endnoteCount: endnotes.length,
     explanationCount,
+    questionPageBreakCount,
     visibleChoiceNumberCount,
     sectionCount: sectionNames.length,
   };
@@ -940,7 +981,9 @@ export async function buildExamFromTemplateHwpx(
       throw new Error(`${question.sourceLabel || question.ordinal}의 정답·해설 미주가 복사 범위에서 누락됐습니다.`);
     }
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
-    clones.forEach((clone) => removeLayoutControls(clone));
+    clones.forEach((clone, offset) => removeLayoutControls(clone, {
+      normalizeChoicePictures: question.choiceElementIndexes?.includes(contentStart + offset),
+    }));
     trimTrailingEmptyQuestionElements(clones);
     if (!clones.length || !hasQuestionContent(clones)) {
       throw new Error(`${question.sourceLabel || question.ordinal}의 정리된 문제 본문이 비어 있습니다.`);
@@ -1131,7 +1174,9 @@ function solutionParagraphs(question, targetDocument, context, outputIndex, tran
     .find((node) => (node.textContent || "").includes("[해설]"));
   if (explanationText) explanationText.textContent = explanationText.textContent.replace("[해설]", "해설");
   removeEndnoteAutoNumbers(result);
-  result.forEach((paragraph) => removeLayoutControls(paragraph));
+  result.forEach((paragraph, index) => removeLayoutControls(paragraph, {
+    normalizeChoicePictures: index === 0 && question.answerType === "multiple_choice",
+  }));
   restoreVisibleSolutionFormatting(context.headerDocument, result);
   remapCloneReferences(result, context);
   return result;
@@ -1184,7 +1229,12 @@ export async function buildExamFromSourcesHwpx(
   sources,
   templateBytes,
   selectedQuestions,
-  { hideEndnotes = false, transformMode = "original", includeSolutions = false } = {},
+  {
+    hideEndnotes = false,
+    transformMode = "original",
+    includeSolutions = false,
+    useDefaultLayout = false,
+  } = {},
 ) {
   if (!sources.length || !selectedQuestions.length) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
   if (!["original", "short", "essay"].includes(transformMode)) throw new Error("지원하지 않는 문항 변환 형식입니다.");
@@ -1264,6 +1314,11 @@ export async function buildExamFromSourcesHwpx(
   if (!sequentialRecord && selectedQuestions.length > slotRecords.length) {
     throw new Error(`선택 문항 ${selectedQuestions.length}개에 비해 템플릿 슬롯은 ${slotRecords.length}개뿐입니다.`);
   }
+  if (useDefaultLayout) {
+    if (!sequentialRecord) throw new Error("기본 템플릿의 연속 문제 삽입 지점을 찾지 못했습니다.");
+    setParagraphColumns(sequentialRecord.element, 1, 0);
+    explanationRecords.forEach((record) => setParagraphColumns(record.element, 2, 1200));
+  }
 
   const cloneQuestion = (question, targetDocument) => {
     const context = sourceContexts.get(question.fileCode);
@@ -1279,9 +1334,15 @@ export async function buildExamFromSourcesHwpx(
     ));
     if (!sourceElements.length || !hasQuestionContent(sourceElements)) throw new Error(`${question.code}의 문제 본문이 비어 있습니다.`);
     if (question.hasEndnote && countNamed(sourceElements, "endNote") === 0) throw new Error(`${question.code}의 정답·해설 미주가 누락됐습니다.`);
+    const sourceIndexes = children
+      .slice(contentStart, contentEnd)
+      .map((_, offset) => contentStart + offset)
+      .filter((sourceIndex) => !removeChoices || !question.choiceElementIndexes?.includes(sourceIndex));
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
     transformQuestionClones(clones, question, targetDocument, transformMode);
-    clones.forEach((clone) => removeLayoutControls(clone));
+    clones.forEach((clone, offset) => removeLayoutControls(clone, {
+      normalizeChoicePictures: question.choiceElementIndexes?.includes(sourceIndexes[offset]),
+    }));
     trimTrailingEmptyQuestionElements(clones);
     if (!clones.length || !hasQuestionContent(clones)) {
       throw new Error(`${question.code}의 정리된 문제 본문이 비어 있습니다.`);
@@ -1295,8 +1356,11 @@ export async function buildExamFromSourcesHwpx(
     clearSlotMarker(sequentialRecord.element);
     const parent = sequentialRecord.element.parentNode;
     const insertionPoint = sequentialRecord.element.nextSibling;
-    selectedQuestions.forEach((question) => cloneQuestion(question, sequentialRecord.documentNode)
-      .forEach((clone) => parent.insertBefore(clone, insertionPoint)));
+    selectedQuestions.forEach((question, index) => {
+      const clones = cloneQuestion(question, sequentialRecord.documentNode);
+      if (useDefaultLayout) setQuestionPageBreak(clones, index > 0);
+      clones.forEach((clone) => parent.insertBefore(clone, insertionPoint));
+    });
   } else {
     slotRecords.forEach((slot, index) => {
       const question = selectedQuestions[index];
@@ -1320,7 +1384,7 @@ export async function buildExamFromSourcesHwpx(
       transformMode,
     );
   } else {
-    explanationRecords.forEach((record) => clearSlotMarker(record.element));
+    explanationRecords.forEach((record) => record.element.remove());
   }
   if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()]);
 

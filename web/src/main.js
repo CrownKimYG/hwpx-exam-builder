@@ -754,7 +754,7 @@ async function loadTemplate(file) {
     templateState.slots = [];
     templateState.hasExplanationMarker = false;
     renderTemplateFields([]);
-    elements.templateFileName.textContent = "내장 빈 2단 템플릿";
+    elements.templateFileName.textContent = "내장 기본 템플릿 · 문제 1쪽 1문항 · 해설 2단";
     setBuildStatus(`템플릿 분석 실패: ${error.message}`, "error");
   }
 }
@@ -795,6 +795,7 @@ async function buildAllExams() {
   elements.buildExams.disabled = true;
   const outputs = [];
   try {
+    const useDefaultTemplate = !templateState.bytes;
     const baseTemplate = templateState.bytes || await getDefaultTemplateBytes();
     const outputType = elements.outputType.value;
     const variants = outputType === "both" ? ["problem", "solution"] : [outputType];
@@ -816,7 +817,12 @@ async function buildAllExams() {
           sources,
           preparedTemplate,
           selectedQuestions,
-          { hideEndnotes, transformMode, includeSolutions: variant === "solution" },
+          {
+            hideEndnotes,
+            transformMode,
+            includeSolutions: variant === "solution",
+            useDefaultLayout: useDefaultTemplate,
+          },
         );
         await validateGeneratedExamHwpx(bytes, {
           expectedQuestionCount: codes.length,
@@ -825,6 +831,8 @@ async function buildAllExams() {
             ? selectedQuestions.filter((question) => question.answerType === "multiple_choice").length
               * (transformMode === "original" ? 5 : 0)
             : null,
+          expectedQuestionPageBreakCount: useDefaultTemplate ? Math.max(0, codes.length - 1) : null,
+          expectedSolutionColumnCount: useDefaultTemplate && variant === "solution" ? 2 : null,
           expectHiddenEndnotes: hideEndnotes,
         });
         await rhwpReady;
@@ -832,6 +840,12 @@ async function buildAllExams() {
         const pages = verification.pageCount();
         verification.free?.();
         if (!pages) throw new Error(`${exam.title}에 표시할 페이지가 없습니다.`);
+        const minimumDefaultPages = codes.length + (variant === "solution" ? 1 : 0);
+        if (useDefaultTemplate && pages < minimumDefaultPages) {
+          throw new Error(
+            `${exam.title}의 기본 배치는 최소 ${minimumDefaultPages}쪽이어야 하지만 ${pages}쪽입니다.`,
+          );
+        }
         outputs.push({
           bytes,
           filename: `${sanitizeFilename(exam.title)}_${variant === "problem" ? "문제" : "해설"}.hwpx`,
