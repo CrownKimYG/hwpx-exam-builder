@@ -16,6 +16,17 @@ export function difficultyFromLabel(label) {
 export function parseBankFilename(filename) {
   const normalized = normalizeKorean(filename);
   const stem = normalized.replace(/\.(?:hwp|hwpx)$/i, "");
+  const ebsiKorean = stem.match(/^\[(\d{5})\]_EBS\s+\d{4}(?:학년도)?\s+(.+?)_\((\d+)\)$/u);
+  if (ebsiKorean) {
+    return {
+      subject: "국어",
+      unitNumber: ebsiKorean[1],
+      unitName: normalizeKorean(ebsiKorean[2].replace(/\s*국어영역\s*/u, " ")),
+      volume: "",
+      declaredQuestionCount: Number(ebsiKorean[3]),
+      parsed: true,
+    };
+  }
   // The unit name may itself contain parenthesized parts such as
   // "도함수의 활용(1)". Treat only the final numeric parentheses
   // immediately before the subject separator as the volume number.

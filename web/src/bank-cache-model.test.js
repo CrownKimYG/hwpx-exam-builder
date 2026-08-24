@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   AUTO_BANK_RULE_ID,
   DEFAULT_BANK_RULE_ID,
+  EBSI_KOREAN_RULE_ID,
   createBankProfile,
   detectBankRule,
   describeBankFolder,
@@ -106,7 +107,29 @@ test("기존 폴더 규칙을 파일별 규칙으로 마이그레이션한다", 
 test("문항이 있는 미주 복사 분석만 처리 방식을 확정한다", () => {
   assert.equal(detectBankRule({ questions: [] }), null);
   assert.equal(detectBankRule({ questions: [{ copyMode: "root-endnote-block" }] }), DEFAULT_BANK_RULE_ID);
+  assert.equal(detectBankRule({ questions: [{ copyMode: "ebsi-korean-passage" }] }), EBSI_KOREAN_RULE_ID);
   assert.equal(serializeBankAnalysis({ filename: "empty.hwpx", questions: [] }), null);
+});
+
+test("EBSi 국어 지문·정답·해설 범위를 캐시에 저장한다", () => {
+  const serialized = serializeBankAnalysis({
+    filename: "korean.hwpx",
+    questions: [{
+      ordinal: 1,
+      copyMode: "ebsi-korean-passage",
+      passageGroupId: "Contents/section0.xml:9",
+      passageStart: 10,
+      passageEnd: 13,
+      copyStart: 31,
+      copyEnd: 39,
+      answerStart: 39,
+      answerEnd: 42,
+      explanationStart: 42,
+      explanationEnd: 50,
+    }],
+  });
+  assert.equal(serialized.questions[0].passageStart, 10);
+  assert.equal(serialized.questions[0].explanationEnd, 50);
 });
 
 test("파일 캐시 키는 문제은행과 파일 변경 정보를 포함한다", () => {

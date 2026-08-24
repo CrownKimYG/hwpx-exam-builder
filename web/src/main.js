@@ -3,6 +3,7 @@ import rhwpWasmUrl from "@rhwp/core/rhwp_bg.wasm?url";
 import JSZip from "jszip";
 import "./styles.css";
 import { parseHwpx, prepareHwpxForPreview, sanitizeHwpxWatermarks } from "./parser.js";
+import { EBSI_KOREAN_COPY_MODE, parseEbsiKoreanHwpx } from "./ebsi-korean-parser.js";
 import {
   bankPreviewBytes,
   isLegacyHwpFile,
@@ -19,7 +20,6 @@ import {
 } from "./template-builder.js";
 import {
   DIFFICULTIES,
-  createProjectSnapshot,
   parseBankFilename,
   parseQuestionCodes,
   projectFileIdentity,
@@ -27,7 +27,6 @@ import {
   sameFileIdentity,
   sortBankFiles,
   unitKey,
-  validateProjectSnapshot,
 } from "./bank-model.js";
 import {
   allocateExamSets,
@@ -38,6 +37,7 @@ import {
   AUTO_BANK_RULE_ID,
   BANK_RULES,
   DEFAULT_BANK_RULE_ID,
+  EBSI_KOREAN_RULE_ID,
   createBankProfile,
   detectBankRule,
   describeBankFolder,
@@ -81,8 +81,8 @@ const elements = Object.fromEntries([
   "preview-file", "previous-page", "next-page", "page-label", "page-stage", "page-canvas", "page-loading",
   "zoom-out", "zoom-fit", "zoom-in", "zoom-label", "toggle-quick", "quick-body", "quick-question-count",
   "quick-exam-count", "quick-seed", "matrix-wrap", "quick-status", "quick-generate", "add-exam",
-    "clear-exams", "exam-list", "template-file", "template-file-name", "output-type", "save-project",
-    "project-file", "question-format", "build-exams", "template-fields", "field-grid", "build-status", "cancel-build",
+    "clear-exams", "exam-list", "template-file", "template-file-name", "output-type",
+    "question-format", "build-exams", "template-fields", "field-grid", "build-status", "cancel-build",
 ].map((id) => [id.replace(/-([a-z])/g, (_, character) => character.toUpperCase()), document.querySelector(`#${id}`)]));
 
 const state = {
@@ -99,7 +99,6 @@ const state = {
   currentFileCode: null,
   zoom: "fit",
   nextExamId: 1,
-  pendingProject: null,
   bankProfile: null,
   selectedBankFiles: new Set(),
 };
@@ -337,7 +336,7 @@ async function renderSavedBankList() {
     const row = createElement("div", { className: "saved-bank-row" });
     const main = createElement("button", {
       className: "saved-bank-main",
-      attributes: { type: "button", "aria-label": `${profile.displayName} 캐시 목록 열기` },
+      attributes: { type: "button", "aria-label": `${profile.displayName} 상세 보기` },
     });
     const name = createElement("strong", { className: "saved-bank-name", text: profile.displayName });
     const meta = createElement("span", {
@@ -345,7 +344,10 @@ async function renderSavedBankList() {
       text: `${profile.rootFolderName} · 파일 ${profile.manifest?.length || 0} · 캐시 ${counts[index]}`,
     });
     main.append(name, meta);
-    main.addEventListener("click", () => { void renderBankCacheList(profile); });
+    main.addEventListener("click", async () => {
+      await renderBankCacheList(profile);
+      elements.savedBankList.scrollTop = 0;
+    });
     const actions = createElement("div", { className: "saved-bank-actions" });
     const rename = createElement("button", { text: "이름 변경", attributes: { type: "button" } });
     rename.addEventListener("click", async () => {
@@ -379,7 +381,7 @@ async function renderSavedBankList() {
 }
 
 async function renderBankCacheList(profile) {
-  elements.savedBanksTitle.textContent = `${profile.displayName} · 캐시`;
+  elements.savedBanksTitle.textContent = profile.displayName;
   elements.savedBanksBack.classList.remove("hidden");
   let cachedFiles;
   try {
@@ -725,7 +727,7 @@ function nextFileCode() {
   return String(maximum + 1).padStart(2, "0");
 }
 
-function resetBank({ clearProject = true } = {}) {
+function resetBank() {
   previewRequest += 1;
   documentViewer?.free?.();
   documentViewer = null;
@@ -736,7 +738,6 @@ function resetBank({ clearProject = true } = {}) {
   state.selectedBankFiles.clear();
   pageCount = 0;
   currentPage = 0;
-  if (clearProject) state.pendingProject = null;
   elements.pageCanvas.replaceChildren();
   elements.pageCanvas.classList.add("hidden");
   elements.pageLoading.textContent = "";
@@ -760,12 +761,12 @@ function removeBankRecord(code) {
   rebuildQuestionIndex();
 }
 
-function projectRecordFor(record) {
-  return state.pendingProject?.files.find((saved) => sameFileIdentity(saved.identity, record.identity)) || null;
-}
-
-async function analyzeBankFileByRule(file, ruleId) {
+async function analyzeBankFileByRule(file, ruleId, { autoDetect = false } = {}) {
+  if (autoDetect && /EBS.*국어영역/u.test(file.name.normalize("NFC"))) {
+    return parseEbsiKoreanHwpx(file);
+  }
   if (ruleId === DEFAULT_BANK_RULE_ID) return parseHwpx(file);
+  if (ruleId === EBSI_KOREAN_RULE_ID) return parseEbsiKoreanHwpx(file);
   throw new Error(`${ruleLabel(ruleId)} 처리 방식은 아직 사용할 수 없습니다.`);
 }
 
@@ -822,7 +823,9 @@ async function processBankRecord(record, { force = false } = {}) {
     record.cacheHit = true;
     record.cacheNeedsWrite = isHwp && !cached?.normalizedBytes;
   } else {
-    record.analysis = await analyzeBankFileByRule(normalized.parserFile, record.ruleId);
+    record.analysis = await analyzeBankFileByRule(normalized.parserFile, record.ruleId, {
+      autoDetect: record.selectedRuleId === AUTO_BANK_RULE_ID && !record.resolvedRuleId,
+    });
     record.cacheNeedsWrite = Boolean(record.bankId);
   }
 }
@@ -941,7 +944,7 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
   }
   const folderProfile = folderMode ? await resolveFolderProfile(candidates) : null;
   if (folderMode && !folderProfile) return;
-  if (replace) resetBank({ clearProject: false });
+  if (replace) resetBank();
   if (folderProfile) {
     state.bankProfile = folderProfile;
     renderBankProfileSummary();
@@ -976,16 +979,6 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
       processingMessage: "",
     };
     applyBankProfileSettings(record);
-    const saved = projectRecordFor(record);
-    if (saved) {
-      record.metadata = { ...record.metadata, ...saved.metadata };
-      record.questionOverrides = saved.questionOverrides || {};
-      record.selectedRuleId = selectedBankRuleId(saved.selectedRuleId || record.selectedRuleId);
-      record.resolvedRuleId = resolvedBankRuleId(saved.resolvedRuleId) || (
-        record.selectedRuleId === AUTO_BANK_RULE_ID ? null : record.selectedRuleId
-      );
-      record.ruleId = record.resolvedRuleId || DEFAULT_BANK_RULE_ID;
-    }
     state.files.push(record);
     additions.push(record);
     nextCode = String(Number(nextCode) + 1).padStart(2, "0");
@@ -1000,7 +993,6 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
   renderBankProfileSummary();
   setBankControlsCompact(true);
   renderBankManager();
-  let cacheHits = 0;
   for (let index = 0; index < additions.length; index += 1) {
     const record = additions[index];
     const isHwp = isLegacyHwpFile(record.file);
@@ -1012,7 +1004,6 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
       await processBankRecord(record);
       finishProcessedRecord(record);
       await cacheProcessedRecord(record);
-      if (record.cacheHit) cacheHits += 1;
     } catch (error) {
       record.error = error.message;
       record.processingStatus = "error";
@@ -1032,12 +1023,10 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
       // 오래된 캐시 정리에 실패해도 현재 작업은 유지한다.
     }
   }
-  await applyPendingProjectSettings();
   const first = state.files.find((record) => record.analysis && !record.error);
   if (first && !state.currentFileCode) await activatePreviewFile(first.code);
   const failures = state.files.filter((record) => record.error).length;
-  const converted = state.files.filter((record) => record.convertedFromHwp && !record.error).length;
-  setStatus(`${state.files.length}개 파일 · ${state.questions.length}문항 구분 완료${cacheHits ? ` · 캐시 ${cacheHits}개` : ""}${converted ? ` · HWP 변환 ${converted}개` : ""}${failures ? ` · 실패 ${failures}개` : ""}`, failures ? "error" : "success");
+  setStatus(failures ? `${failures}개 파일 처리 실패` : "", failures ? "error" : "");
 }
 
 async function filesFromEntry(entry, path = "") {
@@ -1370,6 +1359,17 @@ async function buildAllExams() {
       const exam = state.exams[examIndex];
       const codes = examCodes(exam);
       const selectedQuestions = codes.map((code) => questionByCode.get(code));
+      const hasEbsiKorean = selectedQuestions.some((question) => (
+        question.copyMode === EBSI_KOREAN_COPY_MODE
+      ));
+      const expectedEndnoteCount = selectedQuestions.filter((question) => (
+        question.copyMode === "root-endnote-block"
+      )).length;
+      const minimumDefaultPages = new Set(selectedQuestions.map((question) => (
+        question.copyMode === EBSI_KOREAN_COPY_MODE
+          ? `${question.fileCode}:${question.sectionName}:${question.passageGroupId}`
+          : question.code
+      ))).size;
       const preparedTemplate = await applyTemplateFieldValues(baseTemplate, templateValuesFor(exam, codes.length));
       ensureBuildActive(build);
       const sources = [...new Set(selectedQuestions.map((question) => question.fileCode))].map((code) => {
@@ -1386,7 +1386,7 @@ async function buildAllExams() {
           {
             hideEndnotes,
             transformMode,
-            includeSolutions: false,
+            includeSolutions: variant === "solution",
             useDefaultLayout: useDefaultTemplate,
           },
         );
@@ -1395,9 +1395,11 @@ async function buildAllExams() {
         ensureBuildActive(build);
         await validateGeneratedExamHwpx(bytes, {
           expectedQuestionCount: codes.length,
-          expectedEndnoteCount: codes.length,
+          expectedEndnoteCount,
           expectedChoiceNumberCount: transformMode === "original" ? null : 0,
-          expectedQuestionPageBreakCount: useDefaultTemplate ? Math.max(0, codes.length - 1) : null,
+          expectedQuestionPageBreakCount: useDefaultTemplate && !hasEbsiKorean
+            ? Math.max(0, codes.length - 1)
+            : null,
           expectedSolutionColumnCount: null,
           expectHiddenEndnotes: hideEndnotes,
           preserveOriginalContent: true,
@@ -1409,7 +1411,6 @@ async function buildAllExams() {
         const pages = verification.pageCount();
         verification.free?.();
         if (!pages) throw new Error(`${exam.title}에 표시할 페이지가 없습니다.`);
-        const minimumDefaultPages = codes.length;
         if (useDefaultTemplate && pages < minimumDefaultPages) {
           throw new Error(
             `${exam.title}의 기본 배치는 최소 ${minimumDefaultPages}쪽이어야 하지만 ${pages}쪽입니다.`,
@@ -1447,67 +1448,6 @@ async function buildAllExams() {
 function syncSettingsFromControls() {
   state.settings.outputType = elements.outputType.value;
   state.settings.questionFormat = elements.questionFormat.value;
-}
-
-function saveProject() {
-  state.quick.questionCount = Number(elements.quickQuestionCount.value);
-  state.quick.examCount = Number(elements.quickExamCount.value);
-  state.quick.seed = elements.quickSeed.value;
-  syncSettingsFromControls();
-  const snapshot = createProjectSnapshot({
-    files: state.files,
-    quick: state.quick,
-    exams: state.exams,
-    settings: state.settings,
-  });
-  downloadBlob(new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" }), "hwpx-exam-project.json");
-  setBuildStatus("문제 본문을 제외한 프로젝트 설정 JSON을 저장했습니다.");
-}
-
-async function applyPendingProjectSettings() {
-  const project = state.pendingProject;
-  if (!project) return;
-  const reanalysisGroups = new Map();
-  state.files.forEach((record) => {
-    const saved = project.files.find((item) => sameFileIdentity(item.identity, record.identity));
-    if (!saved) return;
-    record.metadata = { ...record.metadata, ...saved.metadata };
-    record.questionOverrides = saved.questionOverrides || {};
-    if (saved.selectedRuleId) {
-      const targetRuleId = selectedBankRuleId(saved.selectedRuleId);
-      if (targetRuleId !== record.selectedRuleId) {
-        if (!reanalysisGroups.has(targetRuleId)) reanalysisGroups.set(targetRuleId, []);
-        reanalysisGroups.get(targetRuleId).push(record);
-      }
-    }
-  });
-  state.quick = { ...state.quick, ...(project.quick || {}), cells: project.quick?.cells || {} };
-  state.exams = (project.exams || []).map((exam) => ({ ...exam }));
-  state.nextExamId = Math.max(1, ...state.exams.map((exam) => Number(String(exam.id).replace(/\D/g, "")) + 1 || 1));
-  state.settings = { ...state.settings, ...(project.settings || {}) };
-  elements.quickQuestionCount.value = state.quick.questionCount;
-  elements.quickExamCount.value = state.quick.examCount;
-  elements.quickSeed.value = state.quick.seed;
-  elements.outputType.value = state.settings.outputType;
-  elements.questionFormat.value = state.settings.questionFormat;
-  syncSettingsFromControls();
-  rebuildQuestionIndex();
-  renderExamDrafts();
-  state.pendingProject = null;
-  for (const [ruleId, records] of reanalysisGroups) {
-    await reanalyzeBankRecords(records, ruleId);
-  }
-}
-
-async function loadProject(file) {
-  try {
-    const project = validateProjectSnapshot(JSON.parse(await file.text()));
-    state.pendingProject = project;
-    if (state.files.length) await applyPendingProjectSettings();
-    setStatus(state.files.length ? "설정 적용 완료." : "설정 불러오기 완료.", "success");
-  } catch (error) {
-    setStatus(`프로젝트 설정 실패: ${error.message}`, "error");
-  }
 }
 
 function bindEvents() {
@@ -1629,12 +1569,6 @@ function bindEvents() {
   });
   elements.outputType.addEventListener("change", syncSettingsFromControls);
   elements.questionFormat.addEventListener("change", syncSettingsFromControls);
-  elements.saveProject.addEventListener("click", saveProject);
-  elements.projectFile.addEventListener("change", () => {
-    const [file] = elements.projectFile.files;
-    if (file) loadProject(file);
-    elements.projectFile.value = "";
-  });
   elements.buildExams.addEventListener("click", buildAllExams);
   elements.cancelBuild.addEventListener("click", cancelActiveBuild);
 }

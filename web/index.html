@@ -13,22 +13,21 @@
       <header class="hero">
         <div class="hero-title">
           <h1><button class="app-home" id="app-home" type="button">시험지 제작실</button></h1>
+          <button class="bank-list-button" id="saved-banks" type="button">문제은행 목록</button>
           <span class="bank-title-separator hidden" id="bank-title-separator">&gt;</span>
           <div class="bank-profile-summary hidden" id="bank-profile-summary">
             <span id="active-bank-name"></span>
             <button class="text-link" id="rename-bank-profile" type="button">이름 변경</button>
           </div>
         </div>
-        <div class="hero-bank-tools" id="hero-bank-tools">
-          <button id="saved-banks" type="button">문제은행 목록</button>
-        </div>
+        <div class="hero-bank-tools" id="hero-bank-tools"></div>
       </header>
 
       <section class="upload-card" id="upload-card">
         <div class="file-drop" id="bank-drop">
           <strong>새로운 문제은행 추가</strong>
           <div class="upload-actions" id="upload-actions">
-            <label class="button primary" for="folder-input">문제은행 폴더 선택</label>
+            <label class="button folder-select-button" for="folder-input">폴더 선택</label>
             <label class="button" for="files-input">HWP/HWPX 파일 추가</label>
           </div>
           <input id="folder-input" type="file" accept=".hwp,.hwpx" webkitdirectory directory multiple />
@@ -57,6 +56,7 @@
             <select id="bulk-bank-rule" aria-label="선택 파일 처리 방식">
               <option value="auto">자동</option>
               <option value="macro-endnote-v1">미주 기준</option>
+              <option value="ebsi-korean-v1">EBSi 국어</option>
             </select>
             <button id="apply-bank-rule" type="button">적용·재분석</button>
             <button class="text-link" id="clear-bank-selection" type="button">선택 해제</button>
@@ -77,19 +77,22 @@
                 <label for="preview-file">파일 선택</label>
                 <select id="preview-file"></select>
               </div>
-              <nav class="page-controls" aria-label="페이지 이동">
-                <button id="previous-page" type="button" aria-label="이전 페이지">‹</button>
-                <span id="page-label" aria-live="polite">0 / 0</span>
-                <button id="next-page" type="button" aria-label="다음 페이지">›</button>
-              </nav>
-              <div class="zoom-controls" aria-label="미리보기 확대 축소">
-                <button id="zoom-out" type="button" aria-label="축소">−</button>
-                <button id="zoom-fit" type="button"><span id="zoom-label">맞춤</span></button>
-                <button id="zoom-in" type="button" aria-label="확대">＋</button>
-              </div>
             </header>
             <h2 class="sr-only" id="viewer-title">원본 페이지 미리보기</h2>
             <div class="page-stage" id="page-stage">
+              <div class="preview-console">
+                <nav class="page-controls" aria-label="페이지 이동">
+                  <button id="previous-page" type="button" aria-label="이전 페이지">‹</button>
+                  <span id="page-label" aria-live="polite">0 / 0</span>
+                  <button id="next-page" type="button" aria-label="다음 페이지">›</button>
+                </nav>
+                <span class="preview-console-divider" aria-hidden="true"></span>
+                <div class="zoom-controls" aria-label="미리보기 확대 축소">
+                  <button id="zoom-out" type="button" aria-label="축소">−</button>
+                  <button id="zoom-fit" type="button"><span id="zoom-label">맞춤</span></button>
+                  <button id="zoom-in" type="button" aria-label="확대">＋</button>
+                </div>
+              </div>
               <div class="page-loading" id="page-loading"></div>
               <div class="page-canvas hidden" id="page-canvas"></div>
             </div>
@@ -173,11 +176,6 @@
             <option value="essay">서술형</option>
           </select>
         </label>
-        <div class="project-actions">
-          <button id="save-project" type="button">설정 저장</button>
-          <label class="button" for="project-file">설정 불러오기</label>
-          <input id="project-file" type="file" accept="application/json,.json" />
-        </div>
         <button class="primary generate" id="build-exams" type="button" disabled>생성·다운로드</button>
       </div>
       <details class="template-fields hidden" id="template-fields">

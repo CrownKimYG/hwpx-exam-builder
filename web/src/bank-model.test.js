@@ -18,6 +18,25 @@ test("parses EBS filename metadata", () => {
   assert.equal(parsed.declaredQuestionCount, 36);
 });
 
+test("parses EBSi Korean filename metadata", () => {
+  const cases = [
+    ["[26001]_EBS 2027학년도 수능특강 국어영역 문학_(315).hwpx", "26001", "수능특강 문학", 315],
+    ["[26002]_EBS 2027 수능특강 국어영역 독서_(320).hwpx", "26002", "수능특강 독서", 320],
+    ["[26051]_EBS 2027학년도 수능완성 국어영역 독서ㆍ문학ㆍ화법과 작문_(285).hwpx", "26051", "수능완성 독서ㆍ문학ㆍ화법과 작문", 285],
+    ["[26052]_EBS 2027학년도 수능완성 국어영역 독서ㆍ문학ㆍ언어와 매체_(285).hwpx", "26052", "수능완성 독서ㆍ문학ㆍ언어와 매체", 285],
+  ];
+  cases.forEach(([filename, unitNumber, unitName, declaredQuestionCount]) => {
+    assert.deepEqual(parseBankFilename(filename), {
+      subject: "국어",
+      unitNumber,
+      unitName,
+      volume: "",
+      declaredQuestionCount,
+      parsed: true,
+    });
+  });
+});
+
 test("parses HWP filename metadata with the HWPX rule", () => {
   const parsed = parseBankFilename("[수능특강 유형] 2027 01.지수와 로그(01)_수학Ⅰ[36문제].hwp");
   assert.equal(parsed.subject, "수학Ⅰ");

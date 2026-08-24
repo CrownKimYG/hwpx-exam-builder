@@ -4,6 +4,7 @@ export const BANK_CACHE_SCHEMA_VERSION = 2;
 export const BANK_ANALYSIS_VERSION = 1;
 export const AUTO_BANK_RULE_ID = "auto";
 export const DEFAULT_BANK_RULE_ID = "macro-endnote-v1";
+export const EBSI_KOREAN_RULE_ID = "ebsi-korean-v1";
 
 export const BANK_RULES = Object.freeze([
   Object.freeze({
@@ -15,6 +16,11 @@ export const BANK_RULES = Object.freeze([
     id: DEFAULT_BANK_RULE_ID,
     label: "미주 기준",
     description: "문제와 [정답]·[해설] 미주를 한 블록으로 복사합니다.",
+  }),
+  Object.freeze({
+    id: EBSI_KOREAN_RULE_ID,
+    label: "EBSi 국어",
+    description: "공통 지문과 소속 문항·정답·해설을 분리해 묶습니다.",
   }),
 ]);
 
@@ -35,6 +41,17 @@ const QUESTION_CACHE_FIELDS = Object.freeze([
   "copyMode",
   "copyStart",
   "copyEnd",
+  "passageGroupId",
+  "passageRangeLabel",
+  "passageStart",
+  "passageEnd",
+  "passageExplanationStart",
+  "passageExplanationEnd",
+  "answerStart",
+  "answerEnd",
+  "explanationStart",
+  "explanationEnd",
+  "sourceCode",
   "hasEndnote",
   "answerType",
   "answer",
@@ -171,7 +188,8 @@ export function fileAnalysisCacheKey(bankId, identity, ruleId = DEFAULT_BANK_RUL
 }
 
 export function serializeBankAnalysis(analysis) {
-  if (!analysis?.questions?.length || !analysis.questions.every((question) => question.copyMode === "root-endnote-block")) return null;
+  const supportedModes = new Set(["root-endnote-block", "ebsi-korean-passage"]);
+  if (!analysis?.questions?.length || !analysis.questions.every((question) => supportedModes.has(question.copyMode))) return null;
   return {
     filename: analysis.filename,
     questions: analysis.questions.map((question) => Object.fromEntries(
@@ -203,6 +221,9 @@ export function profileFileSettingKey(identity) {
 export function detectBankRule(analysis) {
   if (analysis?.questions?.length && analysis.questions.every((question) => question.copyMode === "root-endnote-block")) {
     return DEFAULT_BANK_RULE_ID;
+  }
+  if (analysis?.questions?.length && analysis.questions.every((question) => question.copyMode === "ebsi-korean-passage")) {
+    return EBSI_KOREAN_RULE_ID;
   }
   return null;
 }

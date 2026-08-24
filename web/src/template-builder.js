@@ -5,6 +5,7 @@ const SECTION_RE = /^Contents\/section\d+\.xml$/;
 const SLOT_RE = /^#(\d+)$/;
 const SEQUENTIAL_MARKER = "{{QUESTIONS}}";
 const EXPLANATION_MARKER = "#해설";
+const EBSI_KOREAN_COPY_MODE = "ebsi-korean-passage";
 const CIRCLED_CHOICE_RE = /[①②③④⑤]/g;
 const CIRCLED_CHOICES = ["①", "②", "③", "④", "⑤"];
 
@@ -399,6 +400,16 @@ function questionIdentity(question) {
   return question.code || question.sourceLabel || `문항 ${question.ordinal}`;
 }
 
+function isEbsiKoreanQuestion(question) {
+  return question.copyMode === EBSI_KOREAN_COPY_MODE;
+}
+
+function passageGroupKey(question) {
+  return isEbsiKoreanQuestion(question)
+    ? `${question.fileCode}:${question.sectionName}:${question.passageGroupId}`
+    : `${question.fileCode}:${question.code || question.ordinal}`;
+}
+
 function assertQuestionReady(question) {
   const identity = questionIdentity(question);
   if (question.copyMode === "root-endnote-block") {
@@ -410,6 +421,22 @@ function assertQuestionReady(question) {
     ) {
       throw new Error(`${identity}의 미주 기준 복사 범위를 확인하지 못했습니다.`);
     }
+    return;
+  }
+  if (isEbsiKoreanQuestion(question)) {
+    const ranges = [
+      [question.passageStart, question.passageEnd, "지문"],
+      [question.copyStart, question.copyEnd, "문제"],
+      [question.answerStart, question.answerEnd, "정답"],
+      [question.explanationStart, question.explanationEnd, "해설"],
+    ];
+    const invalid = ranges.find(([start, end]) => (
+      !Number.isInteger(start) || !Number.isInteger(end) || end <= start
+    ));
+    if (invalid) throw new Error(`${identity}의 ${invalid[2]} 복사 범위를 확인하지 못했습니다.`);
+    if (!String(question.questionText || "").trim()) throw new Error(`${identity}의 문제 본문이 비어 있습니다.`);
+    if (!String(question.answerText || "").trim()) throw new Error(`${identity}의 정답이 비어 있습니다.`);
+    if (!String(question.explanationText || "").trim()) throw new Error(`${identity}의 해설이 비어 있습니다.`);
     return;
   }
   if (!question.questionElements?.length || !hasQuestionContent(question.questionElements)) {
@@ -1376,7 +1403,67 @@ function remapCloneReferences(clones, context) {
   clones.forEach((clone) => remapReferences(clone, context.maps, context.fontMaps, context.binaryMap));
 }
 
-function solutionParagraphs(question, targetDocument, context, outputIndex, transformMode) {
+function prefixQuestionNumber(elements, outputIndex) {
+  const textNode = elements.flatMap((element) => descendants(element, "t"))
+    .find((node) => String(node.textContent || "").trim());
+  if (textNode) textNode.textContent = `${outputIndex}. ${textNode.textContent || ""}`;
+}
+
+function sourceRangeClones(question, targetDocument, context, start, end) {
+  const sourceDocument = context.sectionDocuments.get(question.sectionName);
+  if (!sourceDocument) throw new Error(`${question.code}의 ${question.sectionName}을 찾지 못했습니다.`);
+  return Array.from(sourceDocument.documentElement.children)
+    .slice(start, end)
+    .map((element) => targetDocument.importNode(element, true));
+}
+
+function replaceFirstLabel(elements, label, replacement) {
+  const node = elements.flatMap((element) => descendants(element, "t"))
+    .find((textNode) => (textNode.textContent || "").includes(label));
+  if (node) node.textContent = node.textContent.replace(label, replacement);
+}
+
+function solutionParagraphs(
+  question,
+  targetDocument,
+  context,
+  outputIndex,
+  transformMode,
+  { includePassageExplanation = false } = {},
+) {
+  if (isEbsiKoreanQuestion(question)) {
+    const passageExplanation = includePassageExplanation
+      ? sourceRangeClones(
+        question,
+        targetDocument,
+        context,
+        question.passageExplanationStart,
+        question.passageExplanationEnd,
+      )
+      : [];
+    const answer = sourceRangeClones(
+      question,
+      targetDocument,
+      context,
+      question.answerStart,
+      question.answerEnd,
+    );
+    const explanation = sourceRangeClones(
+      question,
+      targetDocument,
+      context,
+      question.explanationStart,
+      question.explanationEnd,
+    );
+    replaceFirstLabel(passageExplanation, "[해설]", "지문 해설");
+    replaceFirstLabel(answer, "[정답/모범답안]", `${outputIndex}. 정답`);
+    replaceFirstLabel(explanation, "[해설]", "해설");
+    const result = [...passageExplanation, ...answer, ...explanation];
+    result.forEach((paragraph) => removeLayoutControls(paragraph));
+    restoreVisibleSolutionFormatting(context.headerDocument, result);
+    remapCloneReferences(result, context);
+    return result;
+  }
   const answer = targetDocument.importNode(question.answerElement, true);
   const explanation = (question.explanationElements || []).map((element) => targetDocument.importNode(element, true));
   const result = [answer, ...explanation];
@@ -1429,9 +1516,23 @@ function addSolutionsAppendix(
     parent.appendChild(heading);
     insertionPoint = null;
   }
+  let previousPassageKey = null;
   selectedQuestions.forEach((question, index) => {
+    if (question.copyMode === "root-endnote-block") {
+      previousPassageKey = null;
+      return;
+    }
     const context = sourceContexts.get(question.fileCode);
-    const paragraphs = solutionParagraphs(question, targetDocument, context, index + 1, transformMode);
+    const currentPassageKey = passageGroupKey(question);
+    const paragraphs = solutionParagraphs(
+      question,
+      targetDocument,
+      context,
+      index + 1,
+      transformMode,
+      { includePassageExplanation: currentPassageKey !== previousPassageKey },
+    );
+    previousPassageKey = currentPassageKey;
     // Explanation equations are frequently taller than the surrounding text.
     // A wider minimum prevents the renderer from stacking adjacent lines.
     ensureLeftParagraphStyles(outputHeader, paragraphs, { minimumLineSpacingPercent: 220 });
@@ -1457,7 +1558,6 @@ export async function buildExamFromSourcesHwpx(
   if (!sources.length || !selectedQuestions.length) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
   if (!["original", "short", "essay"].includes(transformMode)) throw new Error("지원하지 않는 문항 변환 형식입니다.");
   selectedQuestions.forEach(assertQuestionReady);
-  const macroCopyMode = selectedQuestions.every((question) => question.copyMode === "root-endnote-block");
 
   const firstSource = sources.find((source) => source.id === selectedQuestions[0].fileCode) || sources[0];
   const orderedSources = [firstSource, ...sources.filter((source) => source !== firstSource)];
@@ -1539,7 +1639,11 @@ export async function buildExamFromSourcesHwpx(
     explanationRecords.forEach((record) => setParagraphColumns(record.element, 2, 1200));
   }
 
-  const cloneQuestion = (question, targetDocument) => {
+  const cloneQuestion = (
+    question,
+    targetDocument,
+    { includePassage = false, outputIndex = question.ordinal } = {},
+  ) => {
     const context = sourceContexts.get(question.fileCode);
     if (!context) throw new Error(`${question.fileCode} 문제은행 원문을 찾지 못했습니다.`);
     const sourceDocument = context.sectionDocuments.get(question.sectionName);
@@ -1559,9 +1663,16 @@ export async function buildExamFromSourcesHwpx(
     ));
     if (!sourceElements.length || !hasQuestionContent(sourceElements)) throw new Error(`${question.code}의 문제 본문이 비어 있습니다.`);
     if (question.hasEndnote && countNamed(sourceElements, "endNote") === 0) throw new Error(`${question.code}의 정답·해설 미주가 누락됐습니다.`);
-    const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
+    const questionClones = sourceElements.map((element) => targetDocument.importNode(element, true));
+    const passageClones = includePassage && isEbsiKoreanQuestion(question)
+      ? children.slice(question.passageStart, question.passageEnd)
+        .map((element) => targetDocument.importNode(element, true))
+      : [];
+    const clones = [...passageClones, ...questionClones];
     if (question.copyMode === "root-endnote-block") {
       transformMacroQuestionClones(clones, question, targetDocument, transformMode);
+    } else if (isEbsiKoreanQuestion(question)) {
+      if (transformMode === "essay") rewriteEssayEnding(questionClones);
     } else {
       transformQuestionClones(clones, question, targetDocument, transformMode);
     }
@@ -1573,6 +1684,7 @@ export async function buildExamFromSourcesHwpx(
     if (!clones.length || !hasQuestionContent(clones)) {
       throw new Error(`${question.code}의 정리된 문제 본문이 비어 있습니다.`);
     }
+    if (isEbsiKoreanQuestion(question)) prefixQuestionNumber(questionClones, outputIndex);
     remapCloneReferences(clones, context);
     if (question.copyMode !== "root-endnote-block") {
       ensureLeftParagraphStyles(outputHeader, clones);
@@ -1584,12 +1696,20 @@ export async function buildExamFromSourcesHwpx(
     clearSlotMarker(sequentialRecord.element);
     const parent = sequentialRecord.element.parentNode;
     const insertionPoint = sequentialRecord.element.nextSibling;
+    let previousPassageKey = null;
     selectedQuestions.forEach((question, index) => {
-      const clones = cloneQuestion(question, sequentialRecord.documentNode);
-      if (useDefaultLayout) setQuestionPageBreak(clones, index > 0);
+      const currentPassageKey = passageGroupKey(question);
+      const startsGroup = currentPassageKey !== previousPassageKey;
+      const clones = cloneQuestion(question, sequentialRecord.documentNode, {
+        includePassage: startsGroup,
+        outputIndex: index + 1,
+      });
+      if (useDefaultLayout) setQuestionPageBreak(clones, index > 0 && startsGroup);
       clones.forEach((clone) => parent.insertBefore(clone, insertionPoint));
+      previousPassageKey = currentPassageKey;
     });
   } else {
+    let previousPassageKey = null;
     slotRecords.forEach((slot, index) => {
       const question = selectedQuestions[index];
       if (!question) {
@@ -1597,12 +1717,18 @@ export async function buildExamFromSourcesHwpx(
         return;
       }
       const parent = slot.element.parentNode;
-      cloneQuestion(question, slot.documentNode).forEach((clone) => parent.insertBefore(clone, slot.element));
+      const currentPassageKey = passageGroupKey(question);
+      cloneQuestion(question, slot.documentNode, {
+        includePassage: currentPassageKey !== previousPassageKey,
+        outputIndex: index + 1,
+      }).forEach((clone) => parent.insertBefore(clone, slot.element));
       parent.removeChild(slot.element);
+      previousPassageKey = currentPassageKey;
     });
   }
 
-  if (includeSolutions && !macroCopyMode) {
+  const appendixQuestions = selectedQuestions.filter((question) => question.copyMode !== "root-endnote-block");
+  if (includeSolutions && appendixQuestions.length) {
     addSolutionsAppendix(
       templateSections,
       explanationRecords,
