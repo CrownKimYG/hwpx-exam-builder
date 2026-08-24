@@ -93,6 +93,26 @@
         </section>
       </section>
     </main>
-    <script type="module" src="/src/main.js"></script>
+    <script>
+      (() => {
+        const status = document.querySelector("#status");
+        if (window.location.protocol === "file:") {
+          status.className = "status error";
+          status.textContent = "HTML 파일을 직접 열면 RHWP 렌더러를 실행할 수 없습니다. ";
+          const link = document.createElement("a");
+          link.href = "https://crownkimyg.github.io/hwpx-exam-builder/";
+          link.textContent = "배포 페이지에서 열기";
+          status.append(link);
+          return;
+        }
+
+        window.setTimeout(() => {
+          if (status.dataset.rendererState) return;
+          status.className = "status error";
+          status.textContent = "렌더러 준비 시간이 초과되었습니다. 페이지를 새로고침해 주세요.";
+        }, 20000);
+      })();
+    </script>
+    <script type="module" src="./src/main.js"></script>
   </body>
 </html>

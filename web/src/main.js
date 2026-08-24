@@ -60,7 +60,16 @@ globalThis.measureTextWidth = (font, text) => {
   return measureContext.measureText(text).width;
 };
 
-const rhwpReady = initRhwp({ module_or_path: rhwpWasmUrl });
+const RHWP_INIT_TIMEOUT_MS = 15000;
+const rhwpReady = Promise.race([
+  Promise.resolve().then(() => initRhwp({ module_or_path: rhwpWasmUrl })),
+  new Promise((_, reject) => {
+    window.setTimeout(
+      () => reject(new Error("RHWP 렌더러 초기화 시간이 초과되었습니다. 페이지를 새로고침해 주세요.")),
+      RHWP_INIT_TIMEOUT_MS,
+    );
+  }),
+]);
 let documentViewer = null;
 let currentPage = 0;
 let pageCount = 0;
@@ -437,5 +446,11 @@ elements.clearOrder.addEventListener("click", () => {
 elements.buildExam.addEventListener("click", createExam);
 
 rhwpReady
-  .then(() => setStatus("렌더러 준비 완료. HWPX 파일을 놓거나 선택하세요."))
-  .catch((error) => setStatus(`렌더러 준비 실패: ${error.message}`, "error"));
+  .then(() => {
+    elements.status.dataset.rendererState = "ready";
+    setStatus("렌더러 준비 완료. HWPX 파일을 놓거나 선택하세요.");
+  })
+  .catch((error) => {
+    elements.status.dataset.rendererState = "failed";
+    setStatus(`렌더러 준비 실패: ${error.message}`, "error");
+  });
