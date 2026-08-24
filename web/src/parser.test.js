@@ -29,6 +29,17 @@ test("removes a flattened watermark that would otherwise render as a thin line",
   assert.equal(normalizeEquationScript(script), "x^2+1");
 });
 
+test("removes watermark variants without damaging the equation prefix", () => {
+  assert.equal(
+    normalizeEquationScript("sqrt {2} from\n족보닷컴 본 문제는 저작권법의 보호를 받습니다."),
+    "sqrt {2}",
+  );
+  assert.equal(
+    normalizeEquationScript("x+y\n==============================\nzocbo.com copyright"),
+    "x+y",
+  );
+});
+
 test("removes a zocbo watermark suffix from preview text", () => {
   assert.equal(
     normalizeWatermarkText("문제 본문 ========================== 족보닷컴(zocbo.com)본문제는저작권법의보호를받습니다."),

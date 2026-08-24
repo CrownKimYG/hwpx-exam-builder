@@ -5,8 +5,8 @@ import { coverZocboWatermark } from "./image-watermark.js";
 const TITLE_RE = /❙\s*(예제|유제|기초연습|기본연습|실력완성)\s*(\d+)\s*(유사유형)?/;
 const DIFFICULTY_RE = /(예제|유제|기초(?:연습)?|기본(?:연습)?|실력(?:완성)?)/;
 const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
-const WATERMARK_MARKER_RE = /(?:족보닷컴\s*\(\s*zocbo\.com\s*\)|zocbo\.com)/i;
-const WATERMARK_PREFIX_RE = /(?:\s+from\s*)?={20,}\s*$/i;
+const WATERMARK_MARKER_RE = /(?:족보닷컴(?:\s*\(\s*zocbo\.com\s*\))?|zocbo\.com)/i;
+const WATERMARK_PREFIX_RE = /(?:\s+from\s*)?(?:={20,}\s*)?$/i;
 
 export const DEFAULT_EXAM_TEMPLATE = Object.freeze({
   id: "basic-math-exam-v1",
@@ -127,8 +127,7 @@ function withoutEndnotes(element) {
 }
 
 
-export async function prepareHwpxForPreview(data) {
-  const zip = await JSZip.loadAsync(data);
+async function cleanZipWatermarkXml(zip) {
   const sectionNames = Object.keys(zip.files).filter((name) => /^Contents\/section\d+\.xml$/.test(name));
 
   await Promise.all(sectionNames.map(async (sectionName) => {
@@ -168,9 +167,20 @@ export async function prepareHwpxForPreview(data) {
     descendants(documentNode.documentElement, "t").forEach((textNode) => {
       if ((textNode.textContent || "").trim().toLowerCase() === "zb") textNode.textContent = "";
     });
-    // 원본 그림은 종류나 파일명과 관계없이 그대로 유지한다.
+    descendants(documentNode.documentElement, "stringParam").forEach((parameter) => {
+      parameter.textContent = normalizeWatermarkText(parameter.textContent || "");
+    });
     zip.file(sectionName, new XMLSerializer().serializeToString(documentNode));
   }));
+}
+
+export async function prepareHwpxForPreview(data) {
+  return sanitizeHwpxWatermarks(data);
+}
+
+export async function sanitizeHwpxWatermarks(data) {
+  const zip = await JSZip.loadAsync(data);
+  await cleanZipWatermarkXml(zip);
 
   await coverZipImageWatermarks(zip);
 
@@ -202,16 +212,6 @@ async function coverZipImageWatermarks(zip) {
       // 읽지 못하는 그림은 원본을 유지해 미리보기 전체가 실패하지 않게 한다.
     }
   }
-}
-
-export async function coverHwpxImageWatermarks(data) {
-  const zip = await JSZip.loadAsync(data);
-  await coverZipImageWatermarks(zip);
-  return zip.generateAsync({
-    type: "uint8array",
-    compression: "DEFLATE",
-    compressionOptions: { level: 3 },
-  });
 }
 
 export async function parseHwpx(file) {

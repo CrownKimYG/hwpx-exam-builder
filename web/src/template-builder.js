@@ -805,7 +805,7 @@ export async function validateGeneratedExamHwpx(
   if (unresolvedFields.length) {
     errors.push(`미치환 누름틀 값이 남았습니다: ${[...new Set(unresolvedFields)].join(", ")}`);
   }
-  if (!preserveOriginalContent && watermarkArtifacts.length) {
+  if (watermarkArtifacts.length) {
     errors.push(`제거되지 않은 워터마크가 ${watermarkArtifacts.length}개 남았습니다.`);
   }
 
