@@ -18,6 +18,13 @@ test("parses EBS filename metadata", () => {
   assert.equal(parsed.declaredQuestionCount, 36);
 });
 
+test("parses HWP filename metadata with the HWPX rule", () => {
+  const parsed = parseBankFilename("[수능특강 유형] 2027 01.지수와 로그(01)_수학Ⅰ[36문제].hwp");
+  assert.equal(parsed.subject, "수학Ⅰ");
+  assert.equal(parsed.unitName, "지수와 로그");
+  assert.equal(parsed.volume, "01");
+});
+
 test("normalizes difficulty and question codes", () => {
   assert.equal(difficultyFromLabel("기초연습"), "lv1");
   assert.equal(difficultyFromLabel("예제"), "유제");

@@ -15,7 +15,7 @@ export function difficultyFromLabel(label) {
 
 export function parseBankFilename(filename) {
   const normalized = normalizeKorean(filename);
-  const stem = normalized.replace(/\.hwpx$/i, "");
+  const stem = normalized.replace(/\.(?:hwp|hwpx)$/i, "");
   const match = stem.match(/(\d{1,3})\.\s*([^()[\]_]+?)\s*\((\d+)\)\s*[_-]\s*([^\[\]]+?)(?:\s*\[(\d+)\s*문제\])?$/);
   if (!match) {
     return {

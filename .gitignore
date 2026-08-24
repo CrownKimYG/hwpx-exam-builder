@@ -16,6 +16,7 @@ venv/
 build/
 dist/
 node_modules/
+.pnpm-store/
 web/dist/
 *.egg-info/
 .coverage

@@ -28,6 +28,8 @@ def test_web_uses_multi_bank_exam_workspace() -> None:
 
     assert 'id="folder-input"' in html and "webkitdirectory" in html
     assert 'id="files-input"' in html and "multiple" in html
+    assert 'accept=".hwp,.hwpx"' in html
+    assert "normalizeBankFile" in main_js
     assert 'id="preview-file"' in html
     assert 'id="matrix-wrap"' in html
     assert 'id="exam-list"' in html

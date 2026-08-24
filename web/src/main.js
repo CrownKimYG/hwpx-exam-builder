@@ -3,6 +3,7 @@ import rhwpWasmUrl from "@rhwp/core/rhwp_bg.wasm?url";
 import JSZip from "jszip";
 import "./styles.css";
 import { parseHwpx, prepareHwpxForPreview } from "./parser.js";
+import { isLegacyHwpFile, isSupportedBankFile, normalizeBankFile } from "./hwp-converter.js";
 import { applyTemplateFieldValues, inspectTemplateFields } from "./template-fields.js";
 import {
   buildExamFromSourcesHwpx,
@@ -198,7 +199,9 @@ async function activatePreviewFile(code) {
   elements.pageLoading.classList.remove("hidden");
   elements.pageCanvas.classList.add("hidden");
   try {
-    const previewBytes = await prepareHwpxForPreview(record.bytes);
+    const previewBytes = record.convertedFromHwp
+      ? record.sourceBytes
+      : await prepareHwpxForPreview(record.bytes);
     await rhwpReady;
     if (request !== previewRequest) return;
     documentViewer?.free?.();
@@ -251,6 +254,7 @@ function renderBankManager() {
     const codeCell = createElement("td", { text: record.code });
     const filenameCell = createElement("td", { className: "filename", text: record.file.name });
     filenameCell.title = record.file.name;
+    if (record.convertedFromHwp) filenameCell.append(createElement("span", { className: "format-badge", text: "HWP → HWPX" }));
     const subjectCell = createElement("td");
     const subject = createElement("input", { attributes: { value: record.metadata.subject, "aria-label": `${record.code} 과목` } });
     subject.value = record.metadata.subject;
@@ -263,7 +267,7 @@ function renderBankManager() {
     const unit = createElement("input", { attributes: { "aria-label": `${record.code} 단원` } });
     unit.value = record.metadata.unitName;
     unit.addEventListener("change", () => {
-      record.metadata.unitName = unit.value.trim() || record.file.name.replace(/\.hwpx$/i, "");
+      record.metadata.unitName = unit.value.trim() || record.file.name.replace(/\.(?:hwp|hwpx)$/i, "");
       rebuildQuestionIndex();
     });
     unitCell.append(unit);
@@ -387,9 +391,9 @@ function projectRecordFor(record) {
 }
 
 async function addBankFiles(rawFiles, { replace = false } = {}) {
-  const candidates = [...rawFiles].filter((file) => file.name.toLowerCase().endsWith(".hwpx"));
+  const candidates = [...rawFiles].filter(isSupportedBankFile);
   if (!candidates.length) {
-    setStatus("선택한 항목에서 HWPX 파일을 찾지 못했습니다.", "error");
+    setStatus("선택한 항목에서 HWP 또는 HWPX 파일을 찾지 못했습니다.", "error");
     return;
   }
   if (replace) resetBank({ clearProject: false });
@@ -409,6 +413,8 @@ async function addBankFiles(rawFiles, { replace = false } = {}) {
       questions: [],
       questionOverrides: {},
       bytes: null,
+      sourceBytes: null,
+      convertedFromHwp: false,
       error: null,
       lastPage: 0,
     };
@@ -431,10 +437,27 @@ async function addBankFiles(rawFiles, { replace = false } = {}) {
   renderBankManager();
   for (let index = 0; index < additions.length; index += 1) {
     const record = additions[index];
-    setStatus(`${index + 1} / ${additions.length} · ${record.file.name} 분석 중...`, "loading");
+    const isHwp = isLegacyHwpFile(record.file);
+    setStatus(`${index + 1} / ${additions.length} · ${record.file.name} ${isHwp ? "HWP → HWPX 변환 중..." : "분석 중..."}`, "loading");
     try {
-      record.bytes = new Uint8Array(await record.file.arrayBuffer());
-      record.analysis = await parseHwpx(record.file);
+      const normalized = await normalizeBankFile(record.file, {
+        convertHwp: isHwp ? async (sourceBytes) => {
+          await rhwpReady;
+          const sourceDocument = new HwpDocument(sourceBytes);
+          try {
+            return sourceDocument.exportHwpx();
+          } finally {
+            sourceDocument.free?.();
+          }
+        } : null,
+      });
+      record.bytes = normalized.bytes;
+      record.sourceBytes = normalized.sourceBytes;
+      record.convertedFromHwp = normalized.convertedFromHwp;
+      record.analysis = await parseHwpx(normalized.parserFile);
+      if (record.convertedFromHwp && !record.analysis.questions.length) {
+        throw new Error("HWP는 변환됐지만 [정답]·[해설] 미주가 있는 문항을 찾지 못했습니다.");
+      }
       const declared = record.metadata.declaredQuestionCount;
       if (declared && declared !== record.analysis.questions.length) {
         record.analysis.questions[0]?.warnings?.push(`파일명의 ${declared}문제와 실제 ${record.analysis.questions.length}문항이 다릅니다.`);
@@ -449,7 +472,8 @@ async function addBankFiles(rawFiles, { replace = false } = {}) {
   const first = state.files.find((record) => record.analysis && !record.error);
   if (first && !state.currentFileCode) await activatePreviewFile(first.code);
   const failures = state.files.filter((record) => record.error).length;
-  setStatus(`${state.files.length}개 파일 · ${state.questions.length}문항 분석 완료${failures ? ` · 실패 ${failures}개` : ""}`, failures ? "error" : "success");
+  const converted = state.files.filter((record) => record.convertedFromHwp && !record.error).length;
+  setStatus(`${state.files.length}개 파일 · ${state.questions.length}문항 분석 완료${converted ? ` · HWP 변환 ${converted}개` : ""}${failures ? ` · 실패 ${failures}개` : ""}`, failures ? "error" : "success");
 }
 
 async function filesFromEntry(entry, path = "") {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="여러 HWPX 문제은행을 브라우저에서 분석하고 시험지와 해설지를 조립합니다." />
+    <meta name="description" content="여러 HWP/HWPX 문제은행을 브라우저에서 분석하고 시험지와 해설지를 조립합니다." />
     <meta name="hwpx-exam-builder-version" content="multi-bank-v2" />
     <title>HWPX Exam Builder</title>
     <link rel="stylesheet" href="./src/styles.css" />
@@ -12,25 +12,23 @@
     <main class="shell">
       <header class="hero">
         <div>
-          <p class="eyebrow">HWPX EXAM ASSEMBLER</p>
           <h1>HWPX Exam Builder</h1>
-          <p class="subtitle">문제은행 폴더를 분석하고 조건에 맞는 시험지를 일괄 생성합니다.</p>
+          <p class="subtitle">문제은행을 분류하고 시험지를 조립합니다.</p>
         </div>
-        <span class="privacy-badge">파일 외부 전송 없음</span>
+        <span class="privacy-badge">브라우저에서만 처리</span>
       </header>
 
       <section class="upload-card" id="upload-card">
         <div class="file-drop" id="bank-drop">
-          <span class="file-icon">HWPX × N</span>
-          <strong>문제은행 폴더 또는 여러 HWPX를 놓으세요</strong>
-          <span>하위 폴더를 포함해 HWPX만 읽으며, 원본은 브라우저 밖으로 전송하지 않습니다.</span>
+          <strong>문제은행 추가</strong>
+          <span>폴더를 끌어놓거나 HWP/HWPX 파일을 선택하세요. HWP는 내부에서 HWPX로 변환합니다.</span>
           <div class="upload-actions">
             <label class="button primary" for="folder-input">문제은행 폴더 선택</label>
-            <label class="button" for="files-input">HWPX 파일 추가</label>
+            <label class="button" for="files-input">HWP/HWPX 파일 추가</label>
             <button id="reset-bank" type="button">전체 초기화</button>
           </div>
-          <input id="folder-input" type="file" accept=".hwpx" webkitdirectory directory multiple />
-          <input id="files-input" type="file" accept=".hwpx,application/zip" multiple />
+          <input id="folder-input" type="file" accept=".hwp,.hwpx" webkitdirectory directory multiple />
+          <input id="files-input" type="file" accept=".hwp,.hwpx,application/x-hwp,application/zip" multiple />
         </div>
         <p class="status" id="status" aria-live="polite">렌더러를 준비하는 중입니다...</p>
       </section>
@@ -83,7 +81,7 @@
           <aside class="builder-panel" aria-labelledby="builder-title">
             <section class="quick-card">
               <div class="section-heading">
-                <div><p class="eyebrow">QUICK ASSEMBLY</p><h2 id="builder-title">빠른 출제</h2></div>
+                <h2 id="builder-title">빠른 출제</h2>
                 <button id="toggle-quick" type="button" aria-expanded="true">접기</button>
               </div>
               <div id="quick-body">
@@ -100,7 +98,7 @@
 
             <section class="exam-list-card">
               <div class="section-heading">
-                <div><p class="eyebrow">EXAM DRAFTS</p><h2>시험지 출제 목록</h2></div>
+                <h2>시험지 출제 목록</h2>
                 <div class="inline-actions">
                   <button id="add-exam" type="button">＋ 시험지</button>
                   <button id="clear-exams" type="button">전체 비우기</button>
