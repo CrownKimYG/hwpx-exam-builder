@@ -172,6 +172,16 @@ export async function prepareHwpxForPreview(data) {
     zip.file(sectionName, new XMLSerializer().serializeToString(documentNode));
   }));
 
+  await coverZipImageWatermarks(zip);
+
+  return zip.generateAsync({
+    type: "uint8array",
+    compression: "DEFLATE",
+    compressionOptions: { level: 3 },
+  });
+}
+
+async function coverZipImageWatermarks(zip) {
   const imageTypes = new Map([
     ["jpg", "image/jpeg"],
     ["jpeg", "image/jpeg"],
@@ -192,7 +202,11 @@ export async function prepareHwpxForPreview(data) {
       // 읽지 못하는 그림은 원본을 유지해 미리보기 전체가 실패하지 않게 한다.
     }
   }
+}
 
+export async function coverHwpxImageWatermarks(data) {
+  const zip = await JSZip.loadAsync(data);
+  await coverZipImageWatermarks(zip);
   return zip.generateAsync({
     type: "uint8array",
     compression: "DEFLATE",

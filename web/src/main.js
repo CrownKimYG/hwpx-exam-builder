@@ -2,7 +2,7 @@ import initRhwp, { HwpDocument } from "@rhwp/core";
 import rhwpWasmUrl from "@rhwp/core/rhwp_bg.wasm?url";
 import JSZip from "jszip";
 import "./styles.css";
-import { parseHwpx, prepareHwpxForPreview } from "./parser.js";
+import { coverHwpxImageWatermarks, parseHwpx, prepareHwpxForPreview } from "./parser.js";
 import {
   bankPreviewBytes,
   isLegacyHwpFile,
@@ -810,7 +810,7 @@ async function buildAllExams() {
       for (const variant of variants) {
         setBuildStatus(`${examIndex + 1}/${state.exams.length} · ${exam.title} ${variant === "problem" ? "문제지" : "해설지"} 생성 중...`);
         const hideEndnotes = variant === "problem";
-        const bytes = await buildExamFromSourcesHwpx(
+        let bytes = await buildExamFromSourcesHwpx(
           sources,
           preparedTemplate,
           selectedQuestions,
@@ -821,6 +821,7 @@ async function buildAllExams() {
             useDefaultLayout: useDefaultTemplate,
           },
         );
+        bytes = await coverHwpxImageWatermarks(bytes);
         await validateGeneratedExamHwpx(bytes, {
           expectedQuestionCount: codes.length,
           expectedEndnoteCount: codes.length,

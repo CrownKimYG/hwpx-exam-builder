@@ -41,12 +41,12 @@ function clusterComponents(components) {
 
 /**
  * 족보 이미지에 반복 삽입된 굵은 `zocbo.com` 글자의 픽셀 군집을 찾는다.
- * 하단의 축·도형 라벨은 건드리지 않도록 위치, 비율, 글자 군집 수와 밀도를
- * 모두 만족하는 경우에만 영역을 반환한다.
+ * 워터마크 위치와 관계없이 비율, 글자 군집 수와 밀도를 모두 만족하는
+ * 경우에만 영역을 반환한다.
  */
 export function findZocboWatermarkBounds({ data, width, height }) {
   if (!data || width < 120 || height < 80) return null;
-  const startY = Math.floor(height * 0.62);
+  const startY = 0;
   const scanHeight = height - startY;
   const mask = new Uint8Array(width * scanHeight);
   for (let y = startY; y < height; y += 1) {
@@ -118,9 +118,7 @@ export function findZocboWatermarkBounds({ data, width, height }) {
     const density = area / Math.max(1, boxWidth * boxHeight);
     return { x1, y1, x2, y2, width: boxWidth, height: boxHeight, aspect, density, parts: cluster.length };
   }).filter((box) => (
-    box.x1 >= width * 0.3
-    && box.y1 >= height * 0.68
-    && box.width >= Math.max(80, width * 0.2)
+    box.width >= Math.max(80, width * 0.2)
     && box.width <= Math.min(240, width * 0.62)
     && box.height >= 12
     && box.height <= 42

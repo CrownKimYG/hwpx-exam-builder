@@ -17,19 +17,42 @@ function image(width, height) {
   return { data, width, height, fill };
 }
 
-test("하단의 굵은 zocbo.com 형태 글자 군집만 찾는다", () => {
-  const fixture = image(500, 620);
+function fillWatermark(fixture, startX, startY) {
   const widths = [15, 16, 15, 28, 5, 15, 16, 23];
-  let x = 292;
+  let x = startX;
   widths.forEach((partWidth, index) => {
-    fixture.fill(x, index === 4 ? 541 : 526, partWidth, index === 4 ? 5 : 20);
+    fixture.fill(x, index === 4 ? startY + 15 : startY, partWidth, index === 4 ? 5 : 20);
     x += partWidth + 2;
   });
+  return x;
+}
+
+test("하단 오른쪽의 굵은 zocbo.com 형태 글자 군집을 찾는다", () => {
+  const fixture = image(500, 620);
+  const x = fillWatermark(fixture, 292, 526);
   const bounds = findZocboWatermarkBounds(fixture);
   assert.ok(bounds);
   assert.ok(bounds.x <= 292);
   assert.ok(bounds.y <= 526);
   assert.ok(bounds.x + bounds.width >= x - 2);
+});
+
+test("이미지 어느 위치의 zocbo.com 형태 글자 군집도 찾는다", () => {
+  const positions = [
+    [10, 12],
+    [180, 250],
+    [28, 526],
+    [335, 80],
+  ];
+  positions.forEach(([x, y]) => {
+    const fixture = image(500, 620);
+    const endX = fillWatermark(fixture, x, y);
+    const bounds = findZocboWatermarkBounds(fixture);
+    assert.ok(bounds, `${x}, ${y}의 워터마크를 찾지 못했습니다.`);
+    assert.ok(bounds.x <= x);
+    assert.ok(bounds.y <= y);
+    assert.ok(bounds.x + bounds.width >= endX - 2);
+  });
 });
 
 test("하단에 있어도 짧은 도형 캡션은 워터마크로 판단하지 않는다", () => {
