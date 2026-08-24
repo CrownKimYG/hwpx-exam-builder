@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   findTrimmedContentEnd,
   normalizeEquationScript,
+  normalizeWatermarkText,
 } from "./parser.js";
 
 test("removes the copyright watermark suffix embedded in an equation script", () => {
@@ -26,6 +27,15 @@ test("keeps a legitimate equation from expression", () => {
 test("removes a flattened watermark that would otherwise render as a thin line", () => {
   const script = "x^2+1 from ========================================족보닷컴(zocbo.com)본문제는족보닷컴에서직접제작,자료화,해설작업을수행하여제공해드리는자료입니다.";
   assert.equal(normalizeEquationScript(script), "x^2+1");
+});
+
+test("removes a zocbo watermark suffix from preview text", () => {
+  assert.equal(
+    normalizeWatermarkText("문제 본문 ========================== 족보닷컴(zocbo.com)본문제는저작권법의보호를받습니다."),
+    "문제 본문",
+  );
+  assert.equal(normalizeWatermarkText("족보닷컴(zocbo.com) 워터마크"), "");
+  assert.equal(normalizeWatermarkText("정상 본문"), "정상 본문");
 });
 
 test("trims only empty paragraphs after the last question content", () => {

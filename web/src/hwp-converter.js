@@ -121,7 +121,6 @@ export function convertedHwpxName(filename) {
 }
 
 export function bankPreviewBytes(record) {
-  if (record?.convertedFromHwp && record.sourceBytes?.length) return record.sourceBytes;
   return record?.bytes || null;
 }
 

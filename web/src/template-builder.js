@@ -1276,7 +1276,7 @@ function transformMacroQuestionClones(clones, question, targetDocument, transfor
     replaceMacroAnswer(clones, selectedRuns, targetDocument, identity);
     removeChoiceParagraphs(clones, choiceParagraphs);
   }
-  if (transformMode === "essay") rewriteEssayEnding(clones, targetDocument);
+  if (transformMode === "essay") rewriteEssayEnding(clones);
 }
 
 function replaceAnswerWithActualChoice(elements, question, targetDocument) {
@@ -1315,32 +1315,61 @@ function cleanTextParagraph(documentNode, prototype, value, { pageBreak = false 
   return paragraph;
 }
 
-function rewriteEssayEnding(clones, targetDocument) {
-  const paragraphs = clones.flatMap((element) => (
-    localName(element) === "p" ? [element, ...descendants(element, "p")] : descendants(element, "p")
-  )).filter(paragraphOutsideEndnote);
-  const target = [...paragraphs].reverse().find((paragraph) => textOf(paragraph));
-  if (!target) return;
-  const textNodes = descendants(target, "t").filter(paragraphOutsideEndnote);
-  const last = [...textNodes].reverse().find((node) => (node.textContent || "").trim());
-  if (last) {
-    const original = last.textContent || "";
-    const rewritten = original
-      .replace(/([을를])\s*구하시오\s*[.]?\s*$/, "$1 구하는 과정을 서술하시오.")
-      .replace(/의\s*값은\s*[?？]\s*$/, "의 값을 구하는 과정을 서술하시오.");
-    if (rewritten !== original) {
-      last.textContent = rewritten;
-      return;
-    }
+export function rewriteEssayPromptText(value) {
+  const source = String(value || "");
+  const rules = [
+    [/은\s*[?？]\s*$/u, "을 구하는 과정을 서술하시오."],
+    [/는\s*[?？]\s*$/u, "를 구하는 과정을 서술하시오."],
+    [/구하시오\s*[.]?\s*$/u, "구하는 과정을 서술하시오."],
+  ];
+  for (const [pattern, replacement] of rules) {
+    if (pattern.test(source)) return source.replace(pattern, replacement);
   }
-  const topLevel = clones.findLast((element) => localName(element) === "p") || target;
-  clones.push(cleanTextParagraph(targetDocument, topLevel, "정답을 구하는 과정을 서술하시오."));
+  return source;
+}
+
+function rewriteEssayEnding(clones) {
+  const paragraphs = questionParagraphs(clones);
+  for (const paragraph of [...paragraphs].reverse()) {
+    const textNodes = descendants(paragraph, "t").filter((textNode) => {
+      if (!paragraphOutsideEndnote(textNode)) return false;
+      let owner = textNode.parentElement;
+      while (owner && localName(owner) !== "p") owner = owner.parentElement;
+      return owner === paragraph;
+    });
+    const original = textNodes.map((textNode) => textNode.textContent || "").join("");
+    const rewritten = rewriteEssayPromptText(original);
+    if (rewritten === original) continue;
+
+    let changeIndex = 0;
+    while (changeIndex < original.length && original[changeIndex] === rewritten[changeIndex]) {
+      changeIndex += 1;
+    }
+    let offset = 0;
+    let replacementWritten = false;
+    textNodes.forEach((textNode) => {
+      const text = textNode.textContent || "";
+      const end = offset + text.length;
+      if (end <= changeIndex) {
+        offset = end;
+        return;
+      }
+      if (!replacementWritten) {
+        textNode.textContent = `${text.slice(0, Math.max(0, changeIndex - offset))}${rewritten.slice(changeIndex)}`;
+        replacementWritten = true;
+      } else {
+        textNode.textContent = "";
+      }
+      offset = end;
+    });
+    return;
+  }
 }
 
 function transformQuestionClones(clones, question, targetDocument, transformMode) {
   if (transformMode === "original") return;
   if (question.answerType === "multiple_choice") replaceAnswerWithActualChoice(clones, question, targetDocument);
-  if (transformMode === "essay") rewriteEssayEnding(clones, targetDocument);
+  if (transformMode === "essay") rewriteEssayEnding(clones);
 }
 
 function remapCloneReferences(clones, context) {

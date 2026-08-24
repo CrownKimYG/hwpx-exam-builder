@@ -49,13 +49,17 @@ export function equationScript(equation) {
   return script?.textContent?.trim() || "";
 }
 
-export function normalizeEquationScript(script) {
-  const source = String(script || "");
+export function normalizeWatermarkText(value) {
+  const source = String(value || "");
   const markerIndex = source.search(WATERMARK_MARKER_RE);
-  if (markerIndex < 0) return source.trim();
+  if (markerIndex < 0) return source;
   const prefix = source.slice(0, markerIndex);
   const delimiter = prefix.match(WATERMARK_PREFIX_RE);
-  return prefix.slice(0, delimiter?.index ?? prefix.length).trim();
+  return prefix.slice(0, delimiter?.index ?? prefix.length).trimEnd();
+}
+
+export function normalizeEquationScript(script) {
+  return normalizeWatermarkText(script).trim();
 }
 
 function isInsideNamedElement(node, boundary, name) {
@@ -140,6 +144,24 @@ export async function prepareHwpxForPreview(data) {
       let equation = script.parentElement;
       while (equation && localName(equation) !== "equation") equation = equation.parentElement;
       equation?.remove();
+    });
+
+    descendants(documentNode.documentElement, "p").forEach((paragraph) => {
+      const textNodes = descendants(paragraph, "t").filter((textNode) => {
+        let owner = textNode.parentElement;
+        while (owner && localName(owner) !== "p") owner = owner.parentElement;
+        return owner === paragraph;
+      });
+      const original = textNodes.map((textNode) => textNode.textContent || "").join("");
+      const cleaned = normalizeWatermarkText(original);
+      if (cleaned === original) return;
+      let offset = 0;
+      textNodes.forEach((textNode) => {
+        const value = textNode.textContent || "";
+        const keep = Math.max(0, Math.min(value.length, cleaned.length - offset));
+        textNode.textContent = value.slice(0, keep);
+        offset += value.length;
+      });
     });
 
     descendants(documentNode.documentElement, "t").forEach((textNode) => {

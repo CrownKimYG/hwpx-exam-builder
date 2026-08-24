@@ -199,10 +199,7 @@ async function activatePreviewFile(code) {
   elements.pageLoading.classList.remove("hidden");
   elements.pageCanvas.classList.add("hidden");
   try {
-    const sourcePreviewBytes = bankPreviewBytes(record);
-    const previewBytes = record.convertedFromHwp
-      ? sourcePreviewBytes
-      : await prepareHwpxForPreview(sourcePreviewBytes);
+    const previewBytes = await prepareHwpxForPreview(bankPreviewBytes(record));
     await rhwpReady;
     if (request !== previewRequest) return;
     documentViewer?.free?.();
@@ -827,7 +824,7 @@ async function buildAllExams() {
         await validateGeneratedExamHwpx(bytes, {
           expectedQuestionCount: codes.length,
           expectedEndnoteCount: codes.length,
-          expectedChoiceNumberCount: transformMode === "short" ? 0 : null,
+          expectedChoiceNumberCount: transformMode === "original" ? null : 0,
           expectedQuestionPageBreakCount: useDefaultTemplate ? Math.max(0, codes.length - 1) : null,
           expectedSolutionColumnCount: null,
           expectHiddenEndnotes: hideEndnotes,

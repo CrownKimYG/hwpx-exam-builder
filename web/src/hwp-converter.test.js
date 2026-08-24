@@ -13,15 +13,15 @@ import {
   repairConvertedHwpxBinData,
 } from "./hwp-converter.js";
 
-test("HWP 미리보기는 변환 HWPX가 아니라 원본 HWP 바이트를 사용한다", () => {
+test("HWP 미리보기는 이미지가 보정된 변환 HWPX 바이트를 사용한다", () => {
   const sourceBytes = new Uint8Array([1, 2, 3]);
   const convertedBytes = new Uint8Array([4, 5, 6]);
-  assert.equal(bankPreviewBytes({
+  assert.deepEqual(bankPreviewBytes({
     bytes: convertedBytes,
     sourceBytes,
     convertedFromHwp: true,
-  }), sourceBytes);
-  assert.equal(bankPreviewBytes({
+  }), convertedBytes);
+  assert.deepEqual(bankPreviewBytes({
     bytes: convertedBytes,
     sourceBytes,
     convertedFromHwp: false,
