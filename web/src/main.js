@@ -51,7 +51,7 @@ const elements = Object.fromEntries([
   "zoom-out", "zoom-fit", "zoom-in", "zoom-label", "toggle-quick", "quick-body", "quick-question-count",
   "quick-exam-count", "quick-seed", "matrix-wrap", "quick-status", "quick-generate", "add-exam",
     "clear-exams", "exam-list", "template-file", "template-file-name", "output-type", "save-project",
-    "project-file", "build-exams", "template-fields", "field-grid", "build-status",
+    "project-file", "question-format", "build-exams", "template-fields", "field-grid", "build-status",
 ].map((id) => [id.replace(/-([a-z])/g, (_, character) => character.toUpperCase()), document.querySelector(`#${id}`)]));
 
 const state = {
@@ -64,7 +64,7 @@ const state = {
     seed: `seed-${new Date().toISOString().slice(0, 16).replace(/[-T:]/g, "")}`,
     cells: {},
   },
-  settings: { outputType: "problem" },
+  settings: { outputType: "problem", questionFormat: "original" },
   currentFileCode: null,
   zoom: "fit",
   nextExamId: 1,
@@ -798,6 +798,7 @@ async function buildAllExams() {
     const useDefaultTemplate = !templateState.bytes;
     const baseTemplate = templateState.bytes || await getDefaultTemplateBytes();
     const outputType = elements.outputType.value;
+    const transformMode = elements.questionFormat.value;
     const variants = outputType === "both" ? ["problem", "solution"] : [outputType];
     const questionByCode = new Map(state.questions.map((question) => [question.code, question]));
     for (let examIndex = 0; examIndex < state.exams.length; examIndex += 1) {
@@ -818,7 +819,7 @@ async function buildAllExams() {
           selectedQuestions,
           {
             hideEndnotes,
-            transformMode: "original",
+            transformMode,
             includeSolutions: false,
             useDefaultLayout: useDefaultTemplate,
           },
@@ -826,7 +827,7 @@ async function buildAllExams() {
         await validateGeneratedExamHwpx(bytes, {
           expectedQuestionCount: codes.length,
           expectedEndnoteCount: codes.length,
-          expectedChoiceNumberCount: null,
+          expectedChoiceNumberCount: transformMode === "short" ? 0 : null,
           expectedQuestionPageBreakCount: useDefaultTemplate ? Math.max(0, codes.length - 1) : null,
           expectedSolutionColumnCount: null,
           expectHiddenEndnotes: hideEndnotes,
@@ -867,6 +868,7 @@ async function buildAllExams() {
 
 function syncSettingsFromControls() {
   state.settings.outputType = elements.outputType.value;
+  state.settings.questionFormat = elements.questionFormat.value;
 }
 
 function saveProject() {
@@ -901,6 +903,7 @@ function applyPendingProjectSettings() {
   elements.quickExamCount.value = state.quick.examCount;
   elements.quickSeed.value = state.quick.seed;
   elements.outputType.value = state.settings.outputType;
+  elements.questionFormat.value = state.settings.questionFormat;
   syncSettingsFromControls();
   rebuildQuestionIndex();
   renderExamDrafts();
@@ -1002,6 +1005,7 @@ function bindEvents() {
     elements.templateFile.value = "";
   });
   elements.outputType.addEventListener("change", syncSettingsFromControls);
+  elements.questionFormat.addEventListener("change", syncSettingsFromControls);
   elements.saveProject.addEventListener("click", saveProject);
   elements.projectFile.addEventListener("change", () => {
     const [file] = elements.projectFile.files;
@@ -1013,6 +1017,7 @@ function bindEvents() {
 
 elements.quickSeed.value = state.quick.seed;
 elements.outputType.value = state.settings.outputType;
+elements.questionFormat.value = state.settings.questionFormat;
 syncSettingsFromControls();
 bindEvents();
 renderExamDrafts();

@@ -6,6 +6,7 @@ const SLOT_RE = /^#(\d+)$/;
 const SEQUENTIAL_MARKER = "{{QUESTIONS}}";
 const EXPLANATION_MARKER = "#해설";
 const CIRCLED_CHOICE_RE = /[①②③④⑤]/g;
+const CIRCLED_CHOICES = ["①", "②", "③", "④", "⑤"];
 
 const localName = (node) => node.localName || node.nodeName.split(":").pop();
 const descendants = (element, name) => Array.from(element.getElementsByTagNameNS("*", name));
@@ -20,6 +21,24 @@ function parseXml(xml, label) {
 
 function textOf(element) {
   return descendants(element, "t").map((node) => node.textContent || "").join("").trim();
+}
+
+export function answerChoiceSymbolFromText(value) {
+  return String(value || "").match(/\[정답\][\s\S]*?([①②③④⑤])/)?.[1] || null;
+}
+
+export function hasCompleteChoiceSet(value) {
+  const found = new Set(String(value || "").match(CIRCLED_CHOICE_RE) || []);
+  return CIRCLED_CHOICES.every((symbol) => found.has(symbol));
+}
+
+export function choiceSymbolFromShapeComment(comment, width, height) {
+  const numericWidth = Number(width);
+  const numericHeight = Number(height);
+  if (!Number.isFinite(numericWidth) || !Number.isFinite(numericHeight)) return null;
+  if (numericWidth > 2000 || numericHeight > 2000) return null;
+  const digit = String(comment || "").match(/원본\s*그림의\s*이름\s*:\s*([1-5])\.(?:jpe?g|png|gif|bmp)/i)?.[1];
+  return digit ? CIRCLED_CHOICES[Number(digit) - 1] : null;
 }
 
 function paragraphSlot(paragraph) {
@@ -790,11 +809,18 @@ export async function validateGeneratedExamHwpx(
     errors.push(`제거되지 않은 워터마크가 ${watermarkArtifacts.length}개 남았습니다.`);
   }
 
-  const visibleChoiceNumberCount = sectionDocuments.reduce((sum, documentNode) => (
+  const visibleChoiceTextCount = sectionDocuments.reduce((sum, documentNode) => (
     sum + descendants(documentNode.documentElement, "t")
       .filter(paragraphOutsideEndnote)
       .reduce((count, node) => count + ((node.textContent || "").match(CIRCLED_CHOICE_RE)?.length || 0), 0)
   ), 0);
+  const visibleChoicePictureCount = sectionDocuments.reduce((sum, documentNode) => (
+    sum + descendants(documentNode.documentElement, "pic")
+      .filter(paragraphOutsideEndnote)
+      .filter((picture) => pictureChoiceSymbol(picture))
+      .length
+  ), 0);
+  const visibleChoiceNumberCount = visibleChoiceTextCount + visibleChoicePictureCount;
   if (expectedChoiceNumberCount != null && visibleChoiceNumberCount !== expectedChoiceNumberCount) {
     errors.push(`선택지 번호는 ${expectedChoiceNumberCount}개여야 하지만 ${visibleChoiceNumberCount}개입니다.`);
   }
@@ -1106,6 +1132,153 @@ function answerParagraph(elements) {
     .find((paragraph) => textOf(paragraph).includes("[정답]")) || null;
 }
 
+function pictureChoiceSymbol(picture) {
+  const size = firstDescendant(picture, "curSz");
+  const comment = firstDescendant(picture, "shapeComment")?.textContent || "";
+  return choiceSymbolFromShapeComment(
+    comment,
+    size?.getAttribute("width"),
+    size?.getAttribute("height"),
+  );
+}
+
+function choiceMarkersInParagraph(paragraph) {
+  const textMarkers = descendants(paragraph, "t")
+    .filter(paragraphOutsideEndnote)
+    .flatMap((node) => (node.textContent || "").match(CIRCLED_CHOICE_RE) || []);
+  const pictureMarkers = descendants(paragraph, "pic")
+    .filter(paragraphOutsideEndnote)
+    .map(pictureChoiceSymbol)
+    .filter(Boolean);
+  return [...textMarkers, ...pictureMarkers];
+}
+
+function questionParagraphs(elements) {
+  const result = [];
+  elements.forEach((element) => {
+    if (localName(element) === "p") result.push(element);
+    descendants(element, "p").forEach((paragraph) => result.push(paragraph));
+  });
+  return [...new Set(result)].filter(paragraphOutsideEndnote);
+}
+
+function selectedChoiceRuns(paragraph, symbol, targetDocument) {
+  const result = [];
+  let selected = false;
+  let found = false;
+  let finished = false;
+
+  for (const run of descendants(paragraph, "run")) {
+    if (finished) break;
+    const runClone = targetDocument.importNode(run, false);
+    for (const child of Array.from(run.children)) {
+      if (finished) break;
+      if (localName(child) === "pic") {
+        const marker = pictureChoiceSymbol(child);
+        if (marker) {
+          if (selected && marker !== symbol) {
+            selected = false;
+            finished = true;
+            break;
+          }
+          selected = marker === symbol;
+          if (selected) found = true;
+          continue;
+        }
+      }
+      if (localName(child) !== "t") {
+        if (selected) runClone.appendChild(targetDocument.importNode(child, true));
+        continue;
+      }
+
+      const value = child.textContent || "";
+      const markers = [...value.matchAll(/[①②③④⑤]/g)];
+      if (!markers.length) {
+        if (selected) runClone.appendChild(targetDocument.importNode(child, true));
+        continue;
+      }
+
+      let cursor = 0;
+      for (const marker of markers) {
+        if (selected && marker.index > cursor) {
+          const fragment = targetDocument.importNode(child, false);
+          fragment.textContent = value.slice(cursor, marker.index);
+          runClone.appendChild(fragment);
+        }
+        if (selected && marker[0] !== symbol) {
+          selected = false;
+          finished = true;
+          break;
+        }
+        selected = marker[0] === symbol;
+        if (selected) found = true;
+        cursor = marker.index + marker[0].length;
+      }
+      if (!finished && selected && cursor < value.length) {
+        const fragment = targetDocument.importNode(child, false);
+        fragment.textContent = value.slice(cursor).replace(/^\s+/, "");
+        if (fragment.textContent) runClone.appendChild(fragment);
+      }
+    }
+    if (runClone.children.length) result.push(runClone);
+  }
+  return found ? result : [];
+}
+
+function replaceMacroAnswer(elements, selectedRuns, targetDocument, identity) {
+  const paragraph = answerParagraph(elements);
+  if (!paragraph) throw new Error(`${identity}의 [정답] 문단을 찾지 못했습니다.`);
+  descendants(paragraph, "pic").forEach((node) => node.remove());
+  descendants(paragraph, "equation").forEach((node) => node.remove());
+  const textNodes = descendants(paragraph, "t");
+  const labelNode = textNodes.find((node) => (node.textContent || "").includes("[정답]")) || textNodes[0];
+  if (!labelNode) throw new Error(`${identity}의 정답 입력 위치를 찾지 못했습니다.`);
+  labelNode.textContent = "[정답] ";
+  textNodes.forEach((node) => { if (node !== labelNode) node.textContent = ""; });
+  selectedRuns.forEach((run) => paragraph.appendChild(targetDocument.importNode(run, true)));
+}
+
+function removeChoiceParagraphs(clones, paragraphs) {
+  const topLevel = new Set(clones);
+  const removeTopLevel = new Set();
+  paragraphs.forEach((paragraph) => {
+    if (topLevel.has(paragraph)) {
+      removeTopLevel.add(paragraph);
+      return;
+    }
+    paragraph.remove();
+  });
+  if (!removeTopLevel.size) return;
+  const kept = clones.filter((clone) => !removeTopLevel.has(clone));
+  clones.splice(0, clones.length, ...kept);
+}
+
+function transformMacroQuestionClones(clones, question, targetDocument, transformMode) {
+  if (transformMode === "original") return;
+  const identity = question.code || question.sourceLabel || question.ordinal;
+  const answer = answerParagraph(clones);
+  const answerSymbol = answerChoiceSymbolFromText(answer ? textOf(answer) : "")
+    || (answer ? descendants(answer, "pic").map(pictureChoiceSymbol).find(Boolean) : null);
+  if (answerSymbol) {
+    const choiceParagraphs = questionParagraphs(clones)
+      .filter((paragraph) => choiceMarkersInParagraph(paragraph).length);
+    const choiceSymbols = choiceParagraphs.flatMap(choiceMarkersInParagraph);
+    if (!hasCompleteChoiceSet(choiceSymbols.join(""))) {
+      throw new Error(`${identity}의 다섯 선택지 위치를 찾지 못했습니다.`);
+    }
+    const selectedParagraph = choiceParagraphs.find((paragraph) => (
+      choiceMarkersInParagraph(paragraph).includes(answerSymbol)
+    ));
+    const selectedRuns = selectedParagraph
+      ? selectedChoiceRuns(selectedParagraph, answerSymbol, targetDocument)
+      : [];
+    if (!selectedRuns.length) throw new Error(`${identity}의 실제 정답 선택지를 찾지 못했습니다.`);
+    replaceMacroAnswer(clones, selectedRuns, targetDocument, identity);
+    removeChoiceParagraphs(clones, choiceParagraphs);
+  }
+  if (transformMode === "essay") rewriteEssayEnding(clones, targetDocument);
+}
+
 function replaceAnswerWithActualChoice(elements, question, targetDocument) {
   const paragraph = answerParagraph(elements);
   if (!paragraph) throw new Error(`${question.code || question.ordinal}의 [정답] 문단을 찾지 못했습니다.`);
@@ -1358,7 +1531,9 @@ export async function buildExamFromSourcesHwpx(
     if (!sourceElements.length || !hasQuestionContent(sourceElements)) throw new Error(`${question.code}의 문제 본문이 비어 있습니다.`);
     if (question.hasEndnote && countNamed(sourceElements, "endNote") === 0) throw new Error(`${question.code}의 정답·해설 미주가 누락됐습니다.`);
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
-    if (question.copyMode !== "root-endnote-block") {
+    if (question.copyMode === "root-endnote-block") {
+      transformMacroQuestionClones(clones, question, targetDocument, transformMode);
+    } else {
       transformQuestionClones(clones, question, targetDocument, transformMode);
     }
     clones.forEach((clone, offset) => {
