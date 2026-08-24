@@ -6,8 +6,6 @@ const DIFFICULTY_RE = /(예제|유제|기초(?:연습)?|기본(?:연습)?|실력
 const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const WATERMARK_MARKER_RE = /(?:족보닷컴\s*\(\s*zocbo\.com\s*\)|zocbo\.com)/i;
 const WATERMARK_PREFIX_RE = /(?:\s+from\s*)?={20,}\s*$/i;
-const CHOICE_IMAGE_NAME_RE = /원본\s*그림의\s*이름\s*:\s*([1-5])\.(?:jpe?g|png)\b/i;
-const CIRCLED_CHOICES = Object.freeze(["①", "②", "③", "④", "⑤"]);
 
 export const DEFAULT_EXAM_TEMPLATE = Object.freeze({
   id: "basic-math-exam-v1",
@@ -60,15 +58,6 @@ export function normalizeEquationScript(script) {
   return prefix.slice(0, delimiter?.index ?? prefix.length).trim();
 }
 
-export function choiceNumberFromShapeComment(comment) {
-  const match = String(comment || "").match(CHOICE_IMAGE_NAME_RE);
-  return match ? Number(match[1]) : null;
-}
-
-function choiceNumberFromPicture(picture) {
-  return choiceNumberFromShapeComment(firstDescendant(picture, "shapeComment")?.textContent);
-}
-
 function isInsideNamedElement(node, boundary, name) {
   let current = node.parentElement;
   while (current && current !== boundary) {
@@ -76,28 +65,6 @@ function isInsideNamedElement(node, boundary, name) {
     current = current.parentElement;
   }
   return false;
-}
-
-function choicePictures(element, { skipNotes = false } = {}) {
-  return descendants(element, "pic").filter((picture) => (
-    choiceNumberFromPicture(picture)
-    && (!skipNotes || !isInsideNamedElement(picture, element, "endNote"))
-  ));
-}
-
-export function replaceChoiceNumberPictures(root) {
-  let replacements = 0;
-  choicePictures(root).forEach((picture) => {
-    const number = choiceNumberFromPicture(picture);
-    const text = picture.ownerDocument.createElementNS(
-      picture.namespaceURI,
-      `${picture.prefix || "hp"}:t`,
-    );
-    text.textContent = `${CIRCLED_CHOICES[number - 1]}\u00a0`;
-    picture.parentNode?.replaceChild(text, picture);
-    replacements += 1;
-  });
-  return replacements;
 }
 
 export function plainText(element, { skipNotes = false, equationMode = "script" } = {}) {
@@ -144,44 +111,8 @@ export function findTrimmedContentEnd(contentFlags, start = 0, end = contentFlag
   return trimmedEnd;
 }
 
-function hasContentAfterLabel(elements, label) {
-  const text = textFromElements(elements, { equationMode: "placeholder" })
-    .replaceAll(label, "")
-    .trim();
-  if (text) return true;
-  return elements.some((element) => ["pic", "tbl"].some((name) => descendants(element, name).length));
-}
-
 function textFromElements(elements, options = {}) {
   return elements.map((element) => plainText(element, options)).filter(Boolean).join("\n").trim();
-}
-
-function equationRecords(elements, role, ordinal) {
-  let roleIndex = 0;
-  return elements.flatMap((element) => descendants(element, "equation").map((equation) => {
-    roleIndex += 1;
-    const originalScript = equationScript(equation);
-    return {
-      id: `Q${String(ordinal).padStart(3, "0")}-${role.toUpperCase()}-${String(roleIndex).padStart(2, "0")}`,
-      role,
-      originalScript,
-      normalizedScript: normalizeEquationScript(originalScript),
-    };
-  })).filter((record) => record.normalizedScript);
-}
-
-function imageRefs(element, { skipNotes = false } = {}) {
-  const refs = [];
-  function visit(node) {
-    const name = localName(node);
-    if (skipNotes && name === "endNote") return;
-    if (name === "img" && node.getAttribute("binaryItemIDRef")) {
-      refs.push(node.getAttribute("binaryItemIDRef"));
-    }
-    Array.from(node.children).forEach(visit);
-  }
-  visit(element);
-  return refs;
 }
 
 function withoutEndnotes(element) {
@@ -190,29 +121,6 @@ function withoutEndnotes(element) {
   return clone;
 }
 
-function serializeWrapper(name, elements, attributes = {}) {
-  const documentNode = document.implementation.createDocument(null, name);
-  const root = documentNode.documentElement;
-  Object.entries(attributes).forEach(([key, value]) => root.setAttribute(key, value));
-  elements.forEach((element) => root.appendChild(documentNode.importNode(element, true)));
-  return formatXml(new XMLSerializer().serializeToString(documentNode));
-}
-
-function formatXml(xml) {
-  const compact = xml.replace(/>\s*</g, "><");
-  let depth = 0;
-  return compact
-    .replace(/(<[^>]+>)/g, "$1\n")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      if (/^<\//.test(line)) depth = Math.max(0, depth - 1);
-      const rendered = `${"  ".repeat(depth)}${line}`;
-      if (/^<[^!?/][^>]*[^/]?>$/.test(line) && !line.includes("</")) depth += 1;
-      return rendered;
-    })
-    .join("\n");
-}
 
 export async function prepareHwpxForPreview(data) {
   const zip = await JSZip.loadAsync(data);
@@ -237,11 +145,7 @@ export async function prepareHwpxForPreview(data) {
     descendants(documentNode.documentElement, "t").forEach((textNode) => {
       if ((textNode.textContent || "").trim().toLowerCase() === "zb") textNode.textContent = "";
     });
-    // The preview must preserve source pictures exactly. Some HWP files use
-    // generic names such as `5.jpg` for ordinary artwork as well as for tiny
-    // choice labels, so a document-wide replacement can corrupt a header or
-    // logo. Choice-label normalization is applied later only to paragraphs
-    // that the parser has positively identified as choices.
+    // 원본 그림은 종류나 파일명과 관계없이 그대로 유지한다.
     zip.file(sectionName, new XMLSerializer().serializeToString(documentNode));
   }));
 
@@ -250,131 +154,6 @@ export async function prepareHwpxForPreview(data) {
     compression: "DEFLATE",
     compressionOptions: { level: 3 },
   });
-}
-
-async function bytesForRef(zip, ref) {
-  if (!ref) return null;
-  const prefix = `BinData/${ref}.`;
-  const path = Object.keys(zip.files).find((name) => name.startsWith(prefix));
-  return path ? zip.file(path).async("uint8array") : null;
-}
-
-function equalBytes(left, right) {
-  if (!left || !right || left.length !== right.length) return false;
-  return left.every((value, index) => value === right[index]);
-}
-
-async function answerValue(zip, answerParagraph, choiceRefs) {
-  const warnings = [];
-  const answerPicture = firstDescendant(answerParagraph, "pic");
-  const picturedChoice = answerPicture ? choiceNumberFromPicture(answerPicture) : null;
-  if (picturedChoice) return ["multiple_choice", picturedChoice, warnings];
-  const answerImages = imageRefs(answerParagraph);
-  if (answerImages.length) {
-    const answerBytes = await bytesForRef(zip, answerImages[0]);
-    const choiceBytes = await Promise.all(choiceRefs.map((ref) => bytesForRef(zip, ref)));
-    const matches = choiceBytes
-      .map((bytes, index) => (equalBytes(bytes, answerBytes) ? index + 1 : null))
-      .filter(Boolean);
-    if (matches.length === 1) return ["multiple_choice", matches[0], warnings];
-    warnings.push(`정답 그림과 선택지 번호 그림의 일치 항목이 ${matches.length}개입니다.`);
-    return ["multiple_choice", null, warnings];
-  }
-  const equation = firstDescendant(answerParagraph, "equation");
-  if (equation) {
-    const value = equationScript(equation).split(/\r?\n/).find((line) => line.trim())?.trim();
-    return ["short_answer", value || null, warnings];
-  }
-  const value = plainText(answerParagraph).replace("[정답]", "").trim();
-  const textChoice = CIRCLED_CHOICES.findIndex((choice) => value.includes(choice));
-  if (textChoice >= 0) return ["multiple_choice", textChoice + 1, warnings];
-  if (!value) warnings.push("정답 영역에서 그림, 수식 또는 텍스트를 찾지 못했습니다.");
-  return ["short_answer", value || null, warnings];
-}
-
-export function hasChoiceParagraphMarker(choicePictureCount, text) {
-  return choicePictureCount > 0 || CIRCLED_CHOICES.some((choice) => String(text || "").includes(choice));
-}
-
-export function splitChoiceMarkerText(value, startingNumber = null) {
-  const source = String(value || "");
-  const fragments = [];
-  const markers = [];
-  const markerPattern = /[①②③④⑤]/g;
-  let currentNumber = startingNumber;
-  let cursor = 0;
-  let match = markerPattern.exec(source);
-  while (match) {
-    if (currentNumber && match.index > cursor) {
-      fragments.push({ number: currentNumber, text: source.slice(cursor, match.index) });
-    }
-    currentNumber = CIRCLED_CHOICES.indexOf(match[0]) + 1;
-    markers.push(currentNumber);
-    cursor = match.index + match[0].length;
-    match = markerPattern.exec(source);
-  }
-  if (currentNumber && cursor < source.length) {
-    fragments.push({ number: currentNumber, text: source.slice(cursor) });
-  }
-  return { currentNumber, fragments, markers };
-}
-
-function isChoiceParagraph(paragraph) {
-  if (localName(paragraph) !== "p") return false;
-  const pictureCount = choicePictures(paragraph, { skipNotes: true }).length;
-  const text = plainText(paragraph, { skipNotes: true, equationMode: "placeholder" });
-  return hasChoiceParagraphMarker(pictureCount, text);
-}
-
-function choiceRecords(block) {
-  const choices = Array.from({ length: CIRCLED_CHOICES.length }, () => []);
-  const markerNumbers = new Set();
-  const pictureRefs = Array(CIRCLED_CHOICES.length).fill(null);
-
-  const appendText = (nodes, source, value) => {
-    if (!nodes || !value) return;
-    const clone = source.cloneNode(false);
-    clone.textContent = value;
-    nodes.push(clone);
-  };
-
-  block.forEach((paragraph) => {
-    if (!isChoiceParagraph(paragraph)) return;
-    let currentNumber = null;
-    function visit(node) {
-      const name = localName(node);
-      if (name === "endNote") return;
-      if (name === "pic") {
-        const number = choiceNumberFromPicture(node);
-        if (!number) return;
-        currentNumber = number;
-        markerNumbers.add(number);
-        const ref = firstDescendant(node, "img")?.getAttribute("binaryItemIDRef");
-        if (ref) pictureRefs[number - 1] = ref;
-        return;
-      }
-      if (name === "t") {
-        const split = splitChoiceMarkerText(node.textContent || "", currentNumber);
-        split.markers.forEach((number) => markerNumbers.add(number));
-        split.fragments.forEach((fragment) => {
-          appendText(choices[fragment.number - 1], node, fragment.text);
-        });
-        currentNumber = split.currentNumber;
-        return;
-      }
-      if (currentNumber && (name === "equation" || name === "lineBreak")) {
-        choices[currentNumber - 1].push(node.cloneNode(true));
-        return;
-      }
-      Array.from(node.children).forEach(visit);
-    }
-    visit(paragraph);
-  });
-  return {
-    choices,
-    choiceCount: markerNumbers.size,
-    pictureRefs,
-  };
 }
 
 export async function parseHwpx(file) {

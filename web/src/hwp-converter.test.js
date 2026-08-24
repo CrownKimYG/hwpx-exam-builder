@@ -52,7 +52,8 @@ test("암호화 HWP 오류를 사용자가 해결할 수 있는 문구로 바꾼
 test("변환 HWPX 속성을 정규화하고 미주 번호를 다시 매긴다", async () => {
   const source = new JSZip();
   source.file("Contents/header.xml", '<hh:head xmlns:hh="urn:hh"><hh:img hh:binaryItemIDRef="0"/></hh:head>');
-  source.file("Contents/section0.xml", '<hs:sec xmlns:hs="urn:hs" xmlns:hp="urn:hp"><hp:p hp:paraPrIDRef="6"><hp:endNote hp:number="1" hp:instId="1"/></hp:p><hp:p><hp:endNote hp:number="1" hp:instId="1"/></hp:p></hs:sec>');
+  source.file("Contents/section0.xml", '<hs:sec xmlns:hs="urn:hs" xmlns:hp="urn:hp" xmlns:hc="urn:hc"><hp:p hp:paraPrIDRef="6"><hp:pic><hp:shapeComment>원본 그림의 이름: 5.jpg</hp:shapeComment><hc:img binaryItemIDRef="image5"/></hp:pic><hp:endNote hp:number="1" hp:instId="1"/></hp:p><hp:p><hp:endNote hp:number="1" hp:instId="1"/></hp:p></hs:sec>');
+  source.file("BinData/image5.jpg", new Uint8Array([1, 2, 3, 4]));
   const normalized = await normalizeConvertedHwpx(await source.generateAsync({ type: "uint8array" }));
   const result = await JSZip.loadAsync(normalized);
   const header = await result.file("Contents/header.xml").async("string");
@@ -62,4 +63,8 @@ test("변환 HWPX 속성을 정규화하고 미주 번호를 다시 매긴다", 
   assert.ok(!section.includes("hp:paraPrIDRef"));
   assert.match(section, /number="1" instId="1"/);
   assert.match(section, /number="2" instId="2"/);
+  assert.match(section, /<hp:pic>/);
+  assert.match(section, /원본 그림의 이름: 5\.jpg/);
+  assert.ok(!section.includes("⑤"));
+  assert.deepEqual([...await result.file("BinData/image5.jpg").async("uint8array")], [1, 2, 3, 4]);
 });

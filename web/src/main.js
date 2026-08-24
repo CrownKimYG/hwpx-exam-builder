@@ -1007,7 +1007,7 @@ renderExamDrafts();
 rhwpReady
   .then(() => {
     elements.status.dataset.rendererState = "ready";
-    setStatus("준비 완료.");
+    setStatus("");
   })
   .catch((error) => {
     elements.status.dataset.rendererState = "failed";

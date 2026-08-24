@@ -1,9 +1,5 @@
 import JSZip from "jszip";
-import {
-  choiceNumberFromShapeComment,
-  normalizeEquationScript,
-  replaceChoiceNumberPictures,
-} from "./parser.js";
+import { normalizeEquationScript } from "./parser.js";
 
 const SECTION_RE = /^Contents\/section\d+\.xml$/;
 const SLOT_RE = /^#(\d+)$/;
@@ -309,7 +305,7 @@ function updateSectionsInContent(sourceContentDocument, sectionNames) {
   });
 }
 
-function removeLayoutControls(element, { normalizeChoicePictures = false } = {}) {
+function removeLayoutControls(element) {
   descendants(element, "secPr").forEach((node) => node.remove());
   descendants(element, "colPr").forEach((node) => node.remove());
   // linesegarray caches coordinates for the source page. Once a paragraph is
@@ -328,10 +324,6 @@ function removeLayoutControls(element, { normalizeChoicePictures = false } = {})
   descendants(element, "t").forEach((textNode) => {
     if ((textNode.textContent || "").trim().toLowerCase() === "zb") textNode.textContent = "";
   });
-  // Only confirmed choice paragraphs may normalize generic 1.jpg–5.jpg
-  // pictures. Applying this to an entire question can turn unrelated artwork
-  // (including a header image named 5.jpg) into the text character ⑤.
-  if (normalizeChoicePictures) replaceChoiceNumberPictures(element);
   const paragraphs = localName(element) === "p"
     ? [element, ...descendants(element, "p")]
     : descendants(element, "p");
@@ -798,14 +790,6 @@ export async function validateGeneratedExamHwpx(
     errors.push(`제거되지 않은 워터마크가 ${watermarkArtifacts.length}개 남았습니다.`);
   }
 
-  const choiceNumberPictures = sectionDocuments.flatMap((documentNode) => (
-    descendants(documentNode.documentElement, "pic").filter((picture) => (
-      choiceNumberFromShapeComment(firstDescendant(picture, "shapeComment")?.textContent)
-    ))
-  ));
-  if (!preserveOriginalContent && choiceNumberPictures.length) {
-    errors.push(`선택지 번호 그림이 ${choiceNumberPictures.length}개 남았습니다.`);
-  }
   const visibleChoiceNumberCount = sectionDocuments.reduce((sum, documentNode) => (
     sum + descendants(documentNode.documentElement, "t")
       .filter(paragraphOutsideEndnote)
@@ -1014,9 +998,7 @@ export async function buildExamFromTemplateHwpx(
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
     clones.forEach((clone, offset) => {
       if (question.copyMode === "root-endnote-block") prepareMacroCopyElement(clone);
-      else removeLayoutControls(clone, {
-        normalizeChoicePictures: question.choiceElementIndexes?.includes(contentStart + offset),
-      });
+      else removeLayoutControls(clone);
     });
     trimTrailingEmptyQuestionElements(clones);
     if (!clones.length || !hasQuestionContent(clones)) {
@@ -1210,9 +1192,7 @@ function solutionParagraphs(question, targetDocument, context, outputIndex, tran
     .find((node) => (node.textContent || "").includes("[해설]"));
   if (explanationText) explanationText.textContent = explanationText.textContent.replace("[해설]", "해설");
   removeEndnoteAutoNumbers(result);
-  result.forEach((paragraph, index) => removeLayoutControls(paragraph, {
-    normalizeChoicePictures: index === 0 && question.answerType === "multiple_choice",
-  }));
+  result.forEach((paragraph) => removeLayoutControls(paragraph));
   restoreVisibleSolutionFormatting(context.headerDocument, result);
   remapCloneReferences(result, context);
   return result;
@@ -1377,19 +1357,13 @@ export async function buildExamFromSourcesHwpx(
     ));
     if (!sourceElements.length || !hasQuestionContent(sourceElements)) throw new Error(`${question.code}의 문제 본문이 비어 있습니다.`);
     if (question.hasEndnote && countNamed(sourceElements, "endNote") === 0) throw new Error(`${question.code}의 정답·해설 미주가 누락됐습니다.`);
-    const sourceIndexes = children
-      .slice(contentStart, contentEnd)
-      .map((_, offset) => contentStart + offset)
-      .filter((sourceIndex) => !removeChoices || !question.choiceElementIndexes?.includes(sourceIndex));
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
     if (question.copyMode !== "root-endnote-block") {
       transformQuestionClones(clones, question, targetDocument, transformMode);
     }
     clones.forEach((clone, offset) => {
       if (question.copyMode === "root-endnote-block") prepareMacroCopyElement(clone);
-      else removeLayoutControls(clone, {
-        normalizeChoicePictures: question.choiceElementIndexes?.includes(sourceIndexes[offset]),
-      });
+      else removeLayoutControls(clone);
     });
     trimTrailingEmptyQuestionElements(clones);
     if (!clones.length || !hasQuestionContent(clones)) {
