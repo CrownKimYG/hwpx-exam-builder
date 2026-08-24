@@ -58,8 +58,10 @@ test("parses every filename pattern in the 27 EBS bank folder", () => {
 test("normalizes difficulty and question codes", () => {
   assert.equal(difficultyFromLabel("기초연습"), "lv1");
   assert.equal(difficultyFromLabel("예제"), "유제");
-  assert.equal(normalizeQuestionCode("1-2"), "01-002");
-  assert.deepEqual(parseQuestionCodes("1-2, 02-003"), ["01-002", "02-003"]);
+  assert.equal(normalizeQuestionCode("01-002"), "01-002");
+  assert.equal(normalizeQuestionCode("1-2"), null);
+  assert.deepEqual(parseQuestionCodes("01-002, 02-003"), ["01-002", "02-003"]);
+  assert.throws(() => parseQuestionCodes("1-2"), /01-003 형식/);
 });
 
 test("project snapshots contain identities and settings but no source bytes", () => {

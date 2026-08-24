@@ -30,12 +30,6 @@ import {
 } from "./quick-generator.js";
 
 const DEFAULT_TEMPLATE_URL = "./templates/basic-math-exam.hwpx";
-const TRANSFORM_LABELS = {
-  inherit: "전체 설정 따름",
-  original: "원본 유지",
-  short: "객관식 → 단답형",
-  essay: "모든 문항 → 서술형",
-};
 const FIELD_LABELS = {
   title: "시험지 제목",
   time: "시험 시간(분)",
@@ -50,8 +44,8 @@ const elements = Object.fromEntries([
   "preview-file", "previous-page", "next-page", "page-label", "page-stage", "page-canvas", "page-loading",
   "zoom-out", "zoom-fit", "zoom-in", "zoom-label", "toggle-quick", "quick-body", "quick-question-count",
   "quick-exam-count", "quick-seed", "matrix-wrap", "quick-status", "quick-generate", "add-exam",
-  "clear-exams", "exam-list", "template-file", "template-file-name", "global-transform", "output-type",
-  "hide-endnotes", "save-project", "project-file", "build-exams", "template-fields", "field-grid", "build-status",
+    "clear-exams", "exam-list", "template-file", "template-file-name", "output-type", "save-project",
+    "project-file", "build-exams", "template-fields", "field-grid", "build-status",
 ].map((id) => [id.replace(/-([a-z])/g, (_, character) => character.toUpperCase()), document.querySelector(`#${id}`)]));
 
 const state = {
@@ -64,7 +58,7 @@ const state = {
     seed: `seed-${new Date().toISOString().slice(0, 16).replace(/[-T:]/g, "")}`,
     cells: {},
   },
-  settings: { globalTransform: "original", outputType: "problem", hideEndnotes: true },
+  settings: { outputType: "problem" },
   currentFileCode: null,
   zoom: "fit",
   nextExamId: 1,
@@ -281,7 +275,7 @@ function renderBankManager() {
     remove.addEventListener("click", () => removeBankRecord(record.code));
     actionCell.append(view, remove);
     if (record.error) {
-      countCell.textContent = `분석 실패: ${record.error}`;
+      countCell.textContent = `처리 실패: ${record.error}`;
       countCell.title = record.error;
     }
     row.append(codeCell, filenameCell, subjectCell, unitCell, countCell, actionCell);
@@ -295,7 +289,7 @@ function renderQuestionMetadata(record) {
     elements.questionMetadata.replaceChildren();
     return;
   }
-  const heading = createElement("p", { className: "question-label", text: `${record.code} 문항별 난이도 수정 · 자동 인식값은 원본을 바꾸지 않습니다.` });
+  const heading = createElement("p", { className: "question-label", text: `${record.code} 문항별 난이도 · 복사 범위와 무관한 선택 정보입니다.` });
   const rows = record.questions.map((question) => {
     const row = createElement("div", { className: "question-meta-row" });
     const code = createElement("strong", { text: question.code });
@@ -436,7 +430,7 @@ async function addBankFiles(rawFiles, { replace = false } = {}) {
   for (let index = 0; index < additions.length; index += 1) {
     const record = additions[index];
     const isHwp = isLegacyHwpFile(record.file);
-    setStatus(`${index + 1} / ${additions.length} · ${record.file.name} ${isHwp ? "HWP → HWPX 변환 중..." : "분석 중..."}`, "loading");
+    setStatus(`${index + 1} / ${additions.length} · ${record.file.name} ${isHwp ? "HWP → HWPX 변환 중..." : "문항 구분 중..."}`, "loading");
     try {
       const normalized = await normalizeBankFile(record.file, {
         convertHwp: isHwp ? async (sourceBytes) => {
@@ -471,7 +465,7 @@ async function addBankFiles(rawFiles, { replace = false } = {}) {
   if (first && !state.currentFileCode) await activatePreviewFile(first.code);
   const failures = state.files.filter((record) => record.error).length;
   const converted = state.files.filter((record) => record.convertedFromHwp && !record.error).length;
-  setStatus(`${state.files.length}개 파일 · ${state.questions.length}문항 분석 완료${converted ? ` · HWP 변환 ${converted}개` : ""}${failures ? ` · 실패 ${failures}개` : ""}`, failures ? "error" : "success");
+  setStatus(`${state.files.length}개 파일 · ${state.questions.length}문항 구분 완료${converted ? ` · HWP 변환 ${converted}개` : ""}${failures ? ` · 실패 ${failures}개` : ""}`, failures ? "error" : "success");
 }
 
 async function filesFromEntry(entry, path = "") {
@@ -625,13 +619,12 @@ function quickGenerate() {
   }
 }
 
-function addExam(codes = [], { title = "", transformMode = "inherit" } = {}) {
+function addExam(codes = [], { title = "" } = {}) {
   const sequence = state.nextExamId++;
   state.exams.push({
     id: `exam-${sequence}`,
     title: title || `시험지 ${String(sequence).padStart(2, "0")}`,
     codesText: Array.isArray(codes) ? codes.join(" ") : String(codes || ""),
-    transformMode,
   });
   renderExamDrafts();
 }
@@ -648,23 +641,18 @@ function renderExamDrafts() {
     const title = createElement("input", { attributes: { type: "text", "aria-label": "시험지 제목" } });
     title.value = exam.title;
     title.addEventListener("input", () => { exam.title = title.value; });
-    const mode = createElement("select", { attributes: { "aria-label": `${exam.title} 문항 형식` } });
-    Object.entries(TRANSFORM_LABELS).forEach(([value, label]) => {
-      const option = createElement("option", { text: label });
-      option.value = value;
-      mode.append(option);
-    });
-    mode.value = exam.transformMode;
-    mode.addEventListener("change", () => { exam.transformMode = mode.value; });
     const remove = createElement("button", { className: "remove-exam", text: "×", attributes: { type: "button", "aria-label": `${exam.title} 삭제` } });
     remove.addEventListener("click", () => {
       state.exams = state.exams.filter((item) => item.id !== exam.id);
       renderExamDrafts();
       updateQuickEstimate();
     });
-    header.append(title, mode, remove);
+    header.append(title, remove);
     const textarea = createElement("textarea", {
-      attributes: { placeholder: "예: 01-002 01-015 02-003", "aria-label": `${exam.title} 문항 코드` },
+      attributes: {
+        placeholder: "예: 01-003 01-015 02-004",
+        "aria-label": `${exam.title} 문항 코드`,
+      },
     });
     textarea.value = exam.codesText;
     textarea.addEventListener("input", () => {
@@ -811,36 +799,33 @@ async function buildAllExams() {
       });
       for (const variant of variants) {
         setBuildStatus(`${examIndex + 1}/${state.exams.length} · ${exam.title} ${variant === "problem" ? "문제지" : "해설지"} 생성 중...`);
-        const transformMode = exam.transformMode === "inherit" ? elements.globalTransform.value : exam.transformMode;
-        const hideEndnotes = variant === "problem" || elements.hideEndnotes.checked;
+        const hideEndnotes = variant === "problem";
         const bytes = await buildExamFromSourcesHwpx(
           sources,
           preparedTemplate,
           selectedQuestions,
           {
             hideEndnotes,
-            transformMode,
-            includeSolutions: variant === "solution",
+            transformMode: "original",
+            includeSolutions: false,
             useDefaultLayout: useDefaultTemplate,
           },
         );
         await validateGeneratedExamHwpx(bytes, {
           expectedQuestionCount: codes.length,
           expectedEndnoteCount: codes.length,
-          expectedChoiceNumberCount: variant === "problem"
-            ? selectedQuestions.filter((question) => question.answerType === "multiple_choice").length
-              * (transformMode === "original" ? 5 : 0)
-            : null,
+          expectedChoiceNumberCount: null,
           expectedQuestionPageBreakCount: useDefaultTemplate ? Math.max(0, codes.length - 1) : null,
-          expectedSolutionColumnCount: useDefaultTemplate && variant === "solution" ? 2 : null,
+          expectedSolutionColumnCount: null,
           expectHiddenEndnotes: hideEndnotes,
+          preserveOriginalContent: true,
         });
         await rhwpReady;
         const verification = new HwpDocument(bytes);
         const pages = verification.pageCount();
         verification.free?.();
         if (!pages) throw new Error(`${exam.title}에 표시할 페이지가 없습니다.`);
-        const minimumDefaultPages = codes.length + (variant === "solution" ? 1 : 0);
+        const minimumDefaultPages = codes.length;
         if (useDefaultTemplate && pages < minimumDefaultPages) {
           throw new Error(
             `${exam.title}의 기본 배치는 최소 ${minimumDefaultPages}쪽이어야 하지만 ${pages}쪽입니다.`,
@@ -869,15 +854,7 @@ async function buildAllExams() {
 }
 
 function syncSettingsFromControls() {
-  state.settings.globalTransform = elements.globalTransform.value;
   state.settings.outputType = elements.outputType.value;
-  if (elements.outputType.value === "problem") {
-    elements.hideEndnotes.checked = true;
-    elements.hideEndnotes.disabled = true;
-  } else {
-    elements.hideEndnotes.disabled = false;
-  }
-  state.settings.hideEndnotes = elements.hideEndnotes.checked;
 }
 
 function saveProject() {
@@ -911,9 +888,7 @@ function applyPendingProjectSettings() {
   elements.quickQuestionCount.value = state.quick.questionCount;
   elements.quickExamCount.value = state.quick.examCount;
   elements.quickSeed.value = state.quick.seed;
-  elements.globalTransform.value = state.settings.globalTransform;
   elements.outputType.value = state.settings.outputType;
-  elements.hideEndnotes.checked = state.settings.hideEndnotes;
   syncSettingsFromControls();
   rebuildQuestionIndex();
   renderExamDrafts();
@@ -1016,9 +991,7 @@ function bindEvents() {
     if (file) loadTemplate(file);
     elements.templateFile.value = "";
   });
-  elements.globalTransform.addEventListener("change", syncSettingsFromControls);
   elements.outputType.addEventListener("change", syncSettingsFromControls);
-  elements.hideEndnotes.addEventListener("change", syncSettingsFromControls);
   elements.saveProject.addEventListener("click", saveProject);
   elements.projectFile.addEventListener("change", () => {
     const [file] = elements.projectFile.files;
@@ -1029,9 +1002,7 @@ function bindEvents() {
 }
 
 elements.quickSeed.value = state.quick.seed;
-elements.globalTransform.value = state.settings.globalTransform;
 elements.outputType.value = state.settings.outputType;
-elements.hideEndnotes.checked = state.settings.hideEndnotes;
 syncSettingsFromControls();
 bindEvents();
 renderExamDrafts();

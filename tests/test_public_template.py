@@ -34,9 +34,9 @@ def test_web_uses_multi_bank_exam_workspace() -> None:
     assert 'id="matrix-wrap"' in html
     assert 'id="exam-list"' in html
     assert 'id="generation-bar"' in html
-    assert 'id="global-transform"' in html
     assert 'id="output-type"' in html
-    assert 'id="hide-endnotes"' in html
+    assert 'id="global-transform"' not in html
+    assert 'id="hide-endnotes"' not in html
     assert '<link rel="stylesheet" href="./src/styles.css"' in html
     assert '<script type="module" src="./src/main.js"' in html
     assert 'window.location.protocol === "file:"' in html
@@ -54,5 +54,7 @@ def test_web_uses_multi_bank_exam_workspace() -> None:
     assert 'SEQUENTIAL_MARKER = "{{QUESTIONS}}"' in builder_js
     assert 'EXPLANATION_MARKER = "#해설"' in builder_js
     assert "buildExamFromSourcesHwpx" in builder_js
-    assert "정답을 구하는 과정을 서술하시오." in builder_js
+    assert 'copyMode: "root-endnote-block"' in open("web/src/parser.js", encoding="utf-8").read()
+    assert "prepareMacroCopyElement" in builder_js
+    assert "preserveOriginalContent: true" in main_js
     assert 'equation.setAttribute("baseUnit", "100")' in builder_js

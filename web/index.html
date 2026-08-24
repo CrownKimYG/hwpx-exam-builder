@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="여러 HWP/HWPX 문제은행을 브라우저에서 분석하고 시험지와 해설지를 조립합니다." />
+    <meta name="description" content="여러 HWP/HWPX 문제은행의 문항 블록을 원본 그대로 복사해 시험지를 조립합니다." />
     <meta name="hwpx-exam-builder-version" content="multi-bank-v2" />
     <title>HWPX Exam Builder</title>
     <link rel="stylesheet" href="./src/styles.css" />
@@ -13,7 +13,7 @@
       <header class="hero">
         <div>
           <h1>HWPX Exam Builder</h1>
-          <p class="subtitle">문제은행을 분류하고 시험지를 조립합니다.</p>
+          <p class="subtitle">미주로 구분된 문항을 원본 그대로 복사해 시험지를 조립합니다.</p>
         </div>
         <span class="privacy-badge">브라우저에서만 처리</span>
       </header>
@@ -37,12 +37,12 @@
         <div class="metrics">
           <article><span>문제은행 파일</span><strong id="metric-files">0</strong></article>
           <article><span>전체 문항</span><strong id="metric-total">0</strong></article>
-          <article><span>인식 단원</span><strong id="metric-units">0</strong></article>
+          <article><span>단원</span><strong id="metric-units">0</strong></article>
           <article><span>미분류</span><strong id="metric-unclassified">0</strong></article>
         </div>
 
         <details class="bank-manager">
-          <summary>문제은행 인식 결과 수정</summary>
+          <summary>문제은행 정보 수정</summary>
           <div class="bank-table-wrap">
             <table class="bank-table">
               <thead><tr><th>코드</th><th>파일</th><th>과목</th><th>단원</th><th>난이도별 문항</th><th></th></tr></thead>
@@ -91,7 +91,7 @@
                   <label>랜덤 시드<input id="quick-seed" type="text" /></label>
                 </div>
                 <div class="matrix-wrap" id="matrix-wrap"></div>
-                <p class="quick-status" id="quick-status">문제은행을 분석하면 출제 조건표가 생성됩니다.</p>
+                <p class="quick-status" id="quick-status">문항을 구분하면 출제 조건표가 생성됩니다.</p>
                 <button class="primary wide" id="quick-generate" type="button" disabled>빠른 출제 결과 추가</button>
               </div>
             </section>
@@ -116,23 +116,15 @@
         <div class="template-control">
           <label class="button" for="template-file">템플릿 선택</label>
           <input id="template-file" type="file" accept=".hwpx,application/zip" />
-          <span id="template-file-name">내장 기본 템플릿 · 문제 1쪽 1문항 · 해설 2단</span>
+          <span id="template-file-name">내장 기본 템플릿 · 문제 1쪽 1문항 · 원본 블록 복사</span>
         </div>
-        <label>전체 문항 형식
-          <select id="global-transform">
-            <option value="original">원본 유지</option>
-            <option value="short">객관식 → 단답형</option>
-            <option value="essay">모든 문항 → 서술형</option>
-          </select>
-        </label>
         <label>출력 종류
           <select id="output-type">
-            <option value="problem">문제지만</option>
-            <option value="solution">해설 포함</option>
-            <option value="both">문제지 + 해설지 모두</option>
+            <option value="problem">문제지 · 미주 숨김</option>
+            <option value="solution">해설지 · 원본 미주 표시</option>
+            <option value="both">문제지 + 해설지</option>
           </select>
         </label>
-        <label class="check-control"><input id="hide-endnotes" type="checkbox" /> 미주 숨기기</label>
         <div class="project-actions">
           <button id="save-project" type="button">설정 저장</button>
           <label class="button" for="project-file">설정 불러오기</label>

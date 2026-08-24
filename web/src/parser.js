@@ -32,6 +32,19 @@ const localName = (node) => node.localName || node.nodeName.split(":").pop();
 const descendants = (element, name) =>
   Array.from(element.getElementsByTagNameNS("*", name));
 const firstDescendant = (element, name) => descendants(element, name)[0] || null;
+const NON_ROOT_LIST_CONTAINERS = new Set(["tbl", "tc", "subList", "caption", "drawText", "textart"]);
+
+function rootListEndnote(element) {
+  if (localName(element) !== "p") return null;
+  return descendants(element, "endNote").find((note) => {
+    let ancestor = note.parentElement;
+    while (ancestor && ancestor !== element) {
+      if (NON_ROOT_LIST_CONTAINERS.has(localName(ancestor))) return false;
+      ancestor = ancestor.parentElement;
+    }
+    return ancestor === element;
+  }) || null;
+}
 
 export function equationScript(equation) {
   const script = firstDescendant(equation, "script");
@@ -385,7 +398,7 @@ export async function parseHwpx(file) {
     const root = documentNode.documentElement;
     const children = Array.from(root.children);
     const anchors = children
-      .map((child, index) => ({ index, child, note: firstDescendant(child, "endNote") }))
+      .map((child, index) => ({ index, child, note: rootListEndnote(child) }))
       .filter((item) => item.note);
     const metadata = anchors.map(({ index }, position) => {
       const lowerBound = position > 0 ? anchors[position - 1].index + 1 : 0;
@@ -442,47 +455,11 @@ export async function parseHwpx(file) {
       }
       const contentStart = Math.min(meta.contentStart, end);
       const contentEnd = trimmedQuestionContentEnd(children, contentStart, end);
-      const block = children.slice(meta.start, contentEnd);
-      const bodyElements = block.map(withoutEndnotes);
-      const choiceElementIndexes = children
-        .map((element, childIndex) => ({ element, childIndex }))
-        .filter(({ element, childIndex }) => (
-          childIndex >= contentStart
-          && childIndex < contentEnd
-          && isChoiceParagraph(element)
-        ))
-        .map(({ childIndex }) => childIndex);
-      const noteParagraphs = descendants(note, "p");
-      const answerParagraph = noteParagraphs.find((p) => plainText(p).includes("[정답]")) || noteParagraphs[0] || note;
-      const explanationStart = noteParagraphs.findIndex((p) => plainText(p).includes("[해설]"));
-      const explanationParagraphs = explanationStart >= 0 ? noteParagraphs.slice(explanationStart) : [];
-      const choiceData = choiceRecords(block);
-      const [answerType, answer, warnings] = await answerValue(zip, answerParagraph, choiceData.pictureRefs);
-      if (answerType === "multiple_choice" && choiceData.choiceCount !== 5) {
-        warnings.push(`객관식 선택지 번호가 ${choiceData.choiceCount}개입니다.`);
-      }
-      if (!hasContentAfterLabel([answerParagraph], "[정답]")) {
-        warnings.push("[정답] 영역의 실제 내용이 비어 있습니다.");
-      }
-      if (!hasContentAfterLabel(explanationParagraphs, "[해설]")) {
-        warnings.push("[해설] 영역의 실제 내용이 비어 있습니다.");
-      }
-      const bodyXml = serializeWrapper("body", bodyElements, { section: sectionName, anchor: String(anchorIndex) });
-      const answerXml = serializeWrapper("answer", [answerParagraph]);
-      const explanationXml = serializeWrapper("explanation", explanationParagraphs);
-      const fullXml = formatXml(
-        `<questionBlock ordinal="${questions.length + 1}" sourceLabel="${meta.label}" difficulty="${meta.difficulty}" answerType="${answerType}" answerValue="${answer ?? ""}">${bodyXml}${answerXml}${explanationXml}</questionBlock>`
-      );
-      const questionElements = children
-        .slice(contentStart, contentEnd)
-        .filter((element) => !isChoiceParagraph(element))
+      const copyElements = children.slice(contentStart, contentEnd);
+      const questionElements = copyElements
         .map(withoutEndnotes)
         .filter((element) => hasRenderableElementContent(element, { skipNotes: true }));
-      if (!questionElements.length) warnings.push("문제 본문이 비어 있습니다.");
       const ordinal = questions.length + 1;
-      const problemEquations = equationRecords(bodyElements, "problem", ordinal);
-      const answerEquations = equationRecords([answerParagraph], "answer", ordinal);
-      const explanationEquations = equationRecords(explanationParagraphs, "explanation", ordinal);
       questions.push({
         ordinal,
         sourceLabel: meta.label,
@@ -497,28 +474,27 @@ export async function parseHwpx(file) {
         blockEnd: contentEnd,
         contentStart,
         contentEnd,
+        copyMode: "root-endnote-block",
+        copyStart: contentStart,
+        copyEnd: contentEnd,
         hasEndnote: true,
-        answerType,
-        answer,
-        choiceCount: choiceData.choiceCount,
-        choiceElementIndexes,
-        warnings,
+        answerType: "original",
+        answer: null,
+        choiceCount: null,
+        choiceElementIndexes: [],
+        warnings: [],
         questionElements,
-        choices: choiceData.choices,
-        answerElement: answerParagraph,
-        explanationElements: explanationParagraphs,
+        choices: [],
+        answerElement: null,
+        explanationElements: [],
         questionText: textFromElements(questionElements, { skipNotes: true, equationMode: "placeholder" }),
-        answerText: plainText(answerParagraph, { equationMode: "placeholder" }).replace("[정답]", "").trim(),
-        explanationText: textFromElements(explanationParagraphs, { equationMode: "placeholder" }).replace("[해설]", "").trim(),
-        equations: {
-          problem: problemEquations,
-          answer: answerEquations,
-          explanation: explanationEquations,
-        },
-        bodyXml,
-        answerXml,
-        explanationXml,
-        fullXml,
+        answerText: "",
+        explanationText: "",
+        equations: { problem: [], answer: [], explanation: [] },
+        bodyXml: "",
+        answerXml: "",
+        explanationXml: "",
+        fullXml: "",
       });
     }
   }

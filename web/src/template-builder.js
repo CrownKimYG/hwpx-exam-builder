@@ -341,6 +341,21 @@ function removeLayoutControls(element, { normalizeChoicePictures = false } = {})
   });
 }
 
+function prepareMacroCopyElement(element) {
+  descendants(element, "secPr").forEach((node) => node.remove());
+  descendants(element, "colPr").forEach((node) => node.remove());
+  // 한/글의 복사·붙여넣기처럼 대상 문서에서 줄 위치만 다시 계산한다.
+  // 텍스트, 수식, 표, 그림, 선택지와 미주 내용은 해석하거나 변경하지 않는다.
+  descendants(element, "linesegarray").forEach((node) => node.remove());
+  const paragraphs = localName(element) === "p"
+    ? [element, ...descendants(element, "p")]
+    : descendants(element, "p");
+  paragraphs.forEach((paragraph) => {
+    paragraph.setAttribute("pageBreak", "0");
+    paragraph.setAttribute("columnBreak", "0");
+  });
+}
+
 function hasQuestionContent(elements) {
   return elements.some((element) => {
     const clone = element.cloneNode(true);
@@ -375,6 +390,17 @@ function questionIdentity(question) {
 
 function assertQuestionReady(question) {
   const identity = questionIdentity(question);
+  if (question.copyMode === "root-endnote-block") {
+    if (
+      !question.hasEndnote
+      || !Number.isInteger(question.copyStart)
+      || !Number.isInteger(question.copyEnd)
+      || question.copyEnd <= question.copyStart
+    ) {
+      throw new Error(`${identity}의 미주 기준 복사 범위를 확인하지 못했습니다.`);
+    }
+    return;
+  }
   if (!question.questionElements?.length || !hasQuestionContent(question.questionElements)) {
     throw new Error(`${identity}의 문제 본문이 비어 있습니다.`);
   }
@@ -655,6 +681,7 @@ export async function validateGeneratedExamHwpx(
     expectedQuestionPageBreakCount = null,
     expectedSolutionColumnCount = null,
     expectHiddenEndnotes = false,
+    preserveOriginalContent = false,
   } = {},
 ) {
   const zip = await JSZip.loadAsync(data, { checkCRC32: true });
@@ -703,10 +730,10 @@ export async function validateGeneratedExamHwpx(
   }
   const answerCount = endnotes.filter((note) => textOf(note).includes("[정답]")).length;
   const explanationCount = endnotes.filter((note) => textOf(note).includes("[해설]")).length;
-  if (expectedQuestionCount && answerCount !== expectedQuestionCount) {
+  if (!preserveOriginalContent && expectedQuestionCount && answerCount !== expectedQuestionCount) {
     errors.push(`[정답] 영역은 ${expectedQuestionCount}개여야 하지만 ${answerCount}개입니다.`);
   }
-  if (expectedQuestionCount && explanationCount !== expectedQuestionCount) {
+  if (!preserveOriginalContent && expectedQuestionCount && explanationCount !== expectedQuestionCount) {
     errors.push(`[해설] 영역은 ${expectedQuestionCount}개여야 하지만 ${explanationCount}개입니다.`);
   }
   const emptyQuestionGroups = endnotes.filter((note) => {
@@ -767,7 +794,7 @@ export async function validateGeneratedExamHwpx(
   if (unresolvedFields.length) {
     errors.push(`미치환 누름틀 값이 남았습니다: ${[...new Set(unresolvedFields)].join(", ")}`);
   }
-  if (watermarkArtifacts.length) {
+  if (!preserveOriginalContent && watermarkArtifacts.length) {
     errors.push(`제거되지 않은 워터마크가 ${watermarkArtifacts.length}개 남았습니다.`);
   }
 
@@ -776,7 +803,7 @@ export async function validateGeneratedExamHwpx(
       choiceNumberFromShapeComment(firstDescendant(picture, "shapeComment")?.textContent)
     ))
   ));
-  if (choiceNumberPictures.length) {
+  if (!preserveOriginalContent && choiceNumberPictures.length) {
     errors.push(`선택지 번호 그림이 ${choiceNumberPictures.length}개 남았습니다.`);
   }
   const visibleChoiceNumberCount = sectionDocuments.reduce((sum, documentNode) => (
@@ -795,7 +822,7 @@ export async function validateGeneratedExamHwpx(
       return !ancestor;
     })
   ));
-  if (strayEndnoteNumbers.length) {
+  if (!preserveOriginalContent && strayEndnoteNumbers.length) {
     errors.push(`해설 본문에 미주 자동번호가 ${strayEndnoteNumbers.length}개 남았습니다.`);
   }
 
@@ -968,10 +995,14 @@ export async function buildExamFromTemplateHwpx(
     const sourceDocument = sourceSectionDocuments.get(question.sectionName);
     if (!sourceDocument) throw new Error(`${question.sectionName} 원문을 찾지 못했습니다.`);
     const children = Array.from(sourceDocument.documentElement.children);
-    const contentStart = Number.isInteger(question.contentStart)
+    const contentStart = Number.isInteger(question.copyStart)
+      ? question.copyStart
+      : Number.isInteger(question.contentStart)
       ? question.contentStart
       : question.sourceType === "미분류" ? question.blockStart : question.blockStart + 1;
-    const contentEnd = Number.isInteger(question.contentEnd) ? question.contentEnd : question.blockEnd;
+    const contentEnd = Number.isInteger(question.copyEnd)
+      ? question.copyEnd
+      : Number.isInteger(question.contentEnd) ? question.contentEnd : question.blockEnd;
     const sourceElements = children.slice(contentStart, contentEnd);
     if (!sourceElements.length) throw new Error(`${question.sourceLabel || question.ordinal}의 문제 본문을 찾지 못했습니다.`);
     if (!hasQuestionContent(sourceElements)) {
@@ -981,14 +1012,19 @@ export async function buildExamFromTemplateHwpx(
       throw new Error(`${question.sourceLabel || question.ordinal}의 정답·해설 미주가 복사 범위에서 누락됐습니다.`);
     }
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
-    clones.forEach((clone, offset) => removeLayoutControls(clone, {
-      normalizeChoicePictures: question.choiceElementIndexes?.includes(contentStart + offset),
-    }));
+    clones.forEach((clone, offset) => {
+      if (question.copyMode === "root-endnote-block") prepareMacroCopyElement(clone);
+      else removeLayoutControls(clone, {
+        normalizeChoicePictures: question.choiceElementIndexes?.includes(contentStart + offset),
+      });
+    });
     trimTrailingEmptyQuestionElements(clones);
     if (!clones.length || !hasQuestionContent(clones)) {
       throw new Error(`${question.sourceLabel || question.ordinal}의 정리된 문제 본문이 비어 있습니다.`);
     }
-    ensureLeftParagraphStyles(sourceHeaderDocument, clones);
+    if (question.copyMode !== "root-endnote-block") {
+      ensureLeftParagraphStyles(sourceHeaderDocument, clones);
+    }
     return clones;
   };
 
@@ -1239,6 +1275,7 @@ export async function buildExamFromSourcesHwpx(
   if (!sources.length || !selectedQuestions.length) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
   if (!["original", "short", "essay"].includes(transformMode)) throw new Error("지원하지 않는 문항 변환 형식입니다.");
   selectedQuestions.forEach(assertQuestionReady);
+  const macroCopyMode = selectedQuestions.every((question) => question.copyMode === "root-endnote-block");
 
   const firstSource = sources.find((source) => source.id === selectedQuestions[0].fileCode) || sources[0];
   const orderedSources = [firstSource, ...sources.filter((source) => source !== firstSource)];
@@ -1326,9 +1363,15 @@ export async function buildExamFromSourcesHwpx(
     const sourceDocument = context.sectionDocuments.get(question.sectionName);
     if (!sourceDocument) throw new Error(`${question.code}의 ${question.sectionName}을 찾지 못했습니다.`);
     const children = Array.from(sourceDocument.documentElement.children);
-    const contentStart = Number.isInteger(question.contentStart) ? question.contentStart : question.blockStart;
-    const contentEnd = Number.isInteger(question.contentEnd) ? question.contentEnd : question.blockEnd;
-    const removeChoices = transformMode !== "original" && question.answerType === "multiple_choice";
+    const contentStart = Number.isInteger(question.copyStart)
+      ? question.copyStart
+      : Number.isInteger(question.contentStart) ? question.contentStart : question.blockStart;
+    const contentEnd = Number.isInteger(question.copyEnd)
+      ? question.copyEnd
+      : Number.isInteger(question.contentEnd) ? question.contentEnd : question.blockEnd;
+    const removeChoices = question.copyMode !== "root-endnote-block"
+      && transformMode !== "original"
+      && question.answerType === "multiple_choice";
     const sourceElements = children.slice(contentStart, contentEnd).filter((_, offset) => (
       !removeChoices || !question.choiceElementIndexes?.includes(contentStart + offset)
     ));
@@ -1339,16 +1382,23 @@ export async function buildExamFromSourcesHwpx(
       .map((_, offset) => contentStart + offset)
       .filter((sourceIndex) => !removeChoices || !question.choiceElementIndexes?.includes(sourceIndex));
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
-    transformQuestionClones(clones, question, targetDocument, transformMode);
-    clones.forEach((clone, offset) => removeLayoutControls(clone, {
-      normalizeChoicePictures: question.choiceElementIndexes?.includes(sourceIndexes[offset]),
-    }));
+    if (question.copyMode !== "root-endnote-block") {
+      transformQuestionClones(clones, question, targetDocument, transformMode);
+    }
+    clones.forEach((clone, offset) => {
+      if (question.copyMode === "root-endnote-block") prepareMacroCopyElement(clone);
+      else removeLayoutControls(clone, {
+        normalizeChoicePictures: question.choiceElementIndexes?.includes(sourceIndexes[offset]),
+      });
+    });
     trimTrailingEmptyQuestionElements(clones);
     if (!clones.length || !hasQuestionContent(clones)) {
       throw new Error(`${question.code}의 정리된 문제 본문이 비어 있습니다.`);
     }
     remapCloneReferences(clones, context);
-    ensureLeftParagraphStyles(outputHeader, clones);
+    if (question.copyMode !== "root-endnote-block") {
+      ensureLeftParagraphStyles(outputHeader, clones);
+    }
     return clones;
   };
 
@@ -1374,7 +1424,7 @@ export async function buildExamFromSourcesHwpx(
     });
   }
 
-  if (includeSolutions) {
+  if (includeSolutions && !macroCopyMode) {
     addSolutionsAppendix(
       templateSections,
       explanationRecords,

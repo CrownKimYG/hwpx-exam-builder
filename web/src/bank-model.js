@@ -53,15 +53,16 @@ export function questionCode(code, ordinal) {
 }
 
 export function normalizeQuestionCode(value) {
-  const match = normalizeKorean(value).match(/^(\d+)-(\d+)$/);
-  if (!match) return null;
-  return `${match[1].padStart(2, "0")}-${match[2].padStart(3, "0")}`;
+  const normalized = normalizeKorean(value);
+  return /^\d{2}-\d{3}$/.test(normalized) ? normalized : null;
 }
 
 export function parseQuestionCodes(value) {
   const tokens = normalizeKorean(value).split(/[\s,]+/).filter(Boolean);
   const invalid = tokens.filter((token) => !normalizeQuestionCode(token));
-  if (invalid.length) throw new Error(`문항 코드 형식이 올바르지 않습니다: ${invalid.join(", ")}`);
+  if (invalid.length) {
+    throw new Error(`문항 코드는 01-003 형식으로 입력해야 합니다: ${invalid.join(", ")}`);
+  }
   const codes = tokens.map(normalizeQuestionCode);
   const duplicate = codes.find((code, index) => codes.indexOf(code) !== index);
   if (duplicate) throw new Error(`${duplicate} 문항이 한 시험지에 중복되었습니다.`);
