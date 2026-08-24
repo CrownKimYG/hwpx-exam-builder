@@ -20,7 +20,12 @@
           <div class="upload-actions">
             <label class="button primary" for="folder-input">문제은행 폴더 선택</label>
             <label class="button" for="files-input">HWP/HWPX 파일 추가</label>
+            <button id="saved-banks" type="button">저장된 문제은행</button>
             <button id="reset-bank" type="button">전체 초기화</button>
+          </div>
+          <div class="bank-profile-summary hidden" id="bank-profile-summary">
+            <span id="active-bank-name"></span>
+            <button class="text-link" id="rename-bank-profile" type="button">이름 변경</button>
           </div>
           <input id="folder-input" type="file" accept=".hwp,.hwpx" webkitdirectory directory multiple />
           <input id="files-input" type="file" accept=".hwp,.hwpx,application/x-hwp,application/zip" multiple />
@@ -105,6 +110,32 @@
       </section>
     </main>
 
+    <dialog class="bank-dialog" id="bank-profile-dialog">
+      <form id="bank-profile-form" method="dialog">
+        <h2 id="bank-profile-dialog-title">문제은행 저장</h2>
+        <label>문제은행 이름
+          <input id="bank-profile-name" type="text" maxlength="80" required />
+        </label>
+        <label>처리 규칙
+          <select id="bank-profile-rule">
+            <option value="macro-endnote-v1">미주 기준 복사</option>
+          </select>
+        </label>
+        <div class="dialog-actions">
+          <button id="cancel-bank-profile" type="button">취소</button>
+          <button class="primary" value="confirm" type="submit">저장</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="bank-dialog saved-banks-dialog" id="saved-banks-dialog">
+      <div class="dialog-heading">
+        <h2>저장된 문제은행</h2>
+        <button id="close-saved-banks" type="button" aria-label="닫기">×</button>
+      </div>
+      <div class="saved-bank-list" id="saved-bank-list"></div>
+    </dialog>
+
     <footer class="generation-bar hidden" id="generation-bar">
       <div class="generation-inner">
         <div class="template-control">
@@ -137,7 +168,10 @@
         <summary>템플릿 누름틀 공통값</summary>
         <div class="field-grid" id="field-grid"></div>
       </details>
-      <p class="build-status" id="build-status" aria-live="polite"></p>
+      <div class="build-feedback">
+        <p class="build-status" id="build-status" aria-live="polite"></p>
+        <button class="cancel-build hidden" id="cancel-build" type="button">취소</button>
+      </div>
     </footer>
 
     <script>
