@@ -54,6 +54,7 @@ import {
   countCachedFiles,
   deleteBankProfile,
   getCachedFileAnalysis,
+  listCachedFileAnalyses,
   listBankProfiles,
   pruneBankFileAnalyses,
   requestPersistentBankCache,
@@ -71,9 +72,9 @@ const FIELD_LABELS = {
 const QUESTION_COUNT_FIELDS = new Set(["test_questions_count", "quest_count"]);
 
 const elements = Object.fromEntries([
-  "status", "workspace", "generation-bar", "upload-card", "upload-actions", "hero-bank-tools", "folder-input", "files-input", "reset-bank", "bank-drop", "saved-banks",
-  "bank-profile-summary", "active-bank-name", "rename-bank-profile", "bank-profile-dialog", "bank-profile-form",
-  "bank-profile-dialog-title", "bank-profile-name", "cancel-bank-profile", "saved-banks-dialog", "saved-bank-list", "close-saved-banks",
+  "status", "workspace", "generation-bar", "upload-card", "upload-actions", "hero-bank-tools", "app-home", "folder-input", "files-input", "bank-drop", "saved-banks",
+  "bank-title-separator", "bank-profile-summary", "active-bank-name", "rename-bank-profile", "bank-profile-dialog", "bank-profile-form",
+  "bank-profile-dialog-title", "bank-profile-name", "cancel-bank-profile", "saved-banks-dialog", "saved-banks-title", "saved-banks-back", "saved-bank-list", "close-saved-banks",
   "metric-files", "metric-total", "metric-units", "metric-unclassified", "bank-attention", "bank-attention-text", "bank-manager",
   "bank-bulk-actions", "bank-selection-count", "bulk-bank-rule", "apply-bank-rule", "clear-bank-selection", "select-all-bank-files",
   "bank-file-rows", "question-metadata",
@@ -192,21 +193,22 @@ function resolvedBankRuleId(ruleId) {
 
 function renderBankProfileSummary() {
   const profile = state.bankProfile;
-  elements.bankProfileSummary.classList.toggle("hidden", !profile);
-  elements.activeBankName.textContent = profile ? profile.displayName : "";
+  const hasFiles = state.files.length > 0;
+  elements.bankTitleSeparator.classList.toggle("hidden", !hasFiles);
+  elements.bankProfileSummary.classList.toggle("hidden", !hasFiles);
+  elements.activeBankName.textContent = profile?.displayName || (hasFiles ? "추가한 파일" : "");
+  elements.renameBankProfile.classList.toggle("hidden", !profile);
 }
 
 function setBankControlsCompact(compact) {
   if (compact) {
-    elements.heroBankTools.append(elements.uploadActions, elements.bankProfileSummary, elements.status);
-    elements.heroBankTools.classList.remove("hidden");
+    elements.heroBankTools.prepend(elements.uploadActions);
+    elements.heroBankTools.append(elements.status);
     elements.uploadCard.classList.add("hidden");
     return;
   }
   elements.bankDrop.insertBefore(elements.uploadActions, elements.folderInput);
-  elements.bankDrop.insertBefore(elements.bankProfileSummary, elements.folderInput);
   elements.uploadCard.append(elements.status);
-  elements.heroBankTools.classList.add("hidden");
   elements.uploadCard.classList.remove("hidden");
 }
 
@@ -311,6 +313,8 @@ async function renameActiveBankProfile() {
 }
 
 async function renderSavedBankList() {
+  elements.savedBanksTitle.textContent = "문제은행 목록";
+  elements.savedBanksBack.classList.add("hidden");
   let profiles;
   try {
     profiles = await listBankProfiles();
@@ -319,7 +323,7 @@ async function renderSavedBankList() {
     return;
   }
   if (!profiles.length) {
-    elements.savedBankList.replaceChildren(createElement("p", { className: "saved-bank-empty", text: "저장된 문제은행이 없습니다." }));
+    elements.savedBankList.replaceChildren(createElement("p", { className: "saved-bank-empty", text: "문제은행이 없습니다." }));
     return;
   }
   const counts = await Promise.all(profiles.map(async (profile) => {
@@ -331,28 +335,30 @@ async function renderSavedBankList() {
   }));
   const rows = profiles.map((profile, index) => {
     const row = createElement("div", { className: "saved-bank-row" });
-    const main = createElement("div", { className: "saved-bank-main" });
-    const name = createElement("input", { attributes: { type: "text", maxlength: "80", "aria-label": `${profile.displayName} 이름` } });
-    name.value = profile.displayName;
-    name.addEventListener("change", async () => {
-      profile.displayName = name.value.trim() || profile.rootFolderName;
+    const main = createElement("button", {
+      className: "saved-bank-main",
+      attributes: { type: "button", "aria-label": `${profile.displayName} 캐시 목록 열기` },
+    });
+    const name = createElement("strong", { className: "saved-bank-name", text: profile.displayName });
+    const meta = createElement("span", {
+      className: "saved-bank-meta",
+      text: `${profile.rootFolderName} · 파일 ${profile.manifest?.length || 0} · 캐시 ${counts[index]}`,
+    });
+    main.append(name, meta);
+    main.addEventListener("click", () => { void renderBankCacheList(profile); });
+    const actions = createElement("div", { className: "saved-bank-actions" });
+    const rename = createElement("button", { text: "이름 변경", attributes: { type: "button" } });
+    rename.addEventListener("click", async () => {
+      const descriptor = { rootFolderName: profile.rootFolderName, manifest: profile.manifest };
+      const details = await requestBankProfileDetails({ profile, descriptor, title: "문제은행 수정" });
+      if (!details) return;
+      profile.displayName = details.displayName;
       profile.updatedAt = new Date().toISOString();
       await saveBankProfile(profile);
       if (state.bankProfile?.bankId === profile.bankId) {
         state.bankProfile.displayName = profile.displayName;
         renderBankProfileSummary();
       }
-    });
-    const meta = createElement("span", {
-      className: "saved-bank-meta",
-      text: `${profile.rootFolderName} · ${profile.manifest?.length || 0}개 파일 · 캐시 ${counts[index]}개 · 파일별 처리 방식`,
-    });
-    main.append(name, meta);
-    const actions = createElement("div", { className: "saved-bank-actions" });
-    const clear = createElement("button", { text: "분석 초기화", attributes: { type: "button" } });
-    clear.addEventListener("click", async () => {
-      if (!window.confirm(`${profile.displayName}의 분석 캐시를 초기화할까요?`)) return;
-      await clearBankFileAnalyses(profile.bankId);
       await renderSavedBankList();
     });
     const remove = createElement("button", { text: "삭제", attributes: { type: "button" } });
@@ -365,11 +371,52 @@ async function renderSavedBankList() {
       }
       await renderSavedBankList();
     });
-    actions.append(clear, remove);
+    actions.append(rename, remove);
     row.append(main, actions);
     return row;
   });
   elements.savedBankList.replaceChildren(...rows);
+}
+
+async function renderBankCacheList(profile) {
+  elements.savedBanksTitle.textContent = `${profile.displayName} · 캐시`;
+  elements.savedBanksBack.classList.remove("hidden");
+  let cachedFiles;
+  try {
+    cachedFiles = await listCachedFileAnalyses(profile.bankId);
+  } catch (error) {
+    elements.savedBankList.replaceChildren(createElement("p", { className: "saved-bank-empty", text: error.message }));
+    return;
+  }
+  const rows = cachedFiles.map((cached) => {
+    const row = createElement("div", { className: "cached-file-row" });
+    const path = createElement("strong", {
+      className: "cached-file-name",
+      text: cached.identity?.relativePath || cached.identity?.name || "파일",
+    });
+    path.title = path.textContent;
+    const size = Number(cached.identity?.size) || 0;
+    const sizeLabel = size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1024))} KB`;
+    const meta = createElement("span", {
+      className: "saved-bank-meta",
+      text: `${ruleLabel(cached.ruleId)} · ${sizeLabel} · 캐시됨`,
+    });
+    row.append(path, meta);
+    return row;
+  });
+  if (!rows.length) {
+    rows.push(createElement("p", { className: "saved-bank-empty", text: "캐시된 파일이 없습니다." }));
+  }
+  const actions = createElement("div", { className: "cache-list-actions" });
+  const clear = createElement("button", { text: "전체 캐시 초기화", attributes: { type: "button" } });
+  clear.disabled = !cachedFiles.length;
+  clear.addEventListener("click", async () => {
+    if (!window.confirm(`${profile.displayName}의 분석 캐시를 초기화할까요?`)) return;
+    await clearBankFileAnalyses(profile.bankId);
+    await renderBankCacheList(profile);
+  });
+  actions.append(clear);
+  elements.savedBankList.replaceChildren(...rows, actions);
 }
 
 async function showSavedBanks() {
@@ -661,7 +708,7 @@ function rebuildQuestionIndex({ renderManager = true } = {}) {
     }));
     return record.questions;
   });
-  elements.metricFiles.textContent = state.files.filter((record) => record.analysis && !record.error).length;
+  elements.metricFiles.textContent = state.files.length;
   elements.metricTotal.textContent = state.questions.length;
   elements.metricUnits.textContent = new Set(state.questions.map((question) => question.unitKey)).size;
   elements.metricUnclassified.textContent = state.questions.filter((question) => question.difficulty === "미분류").length;
@@ -700,7 +747,7 @@ function resetBank({ clearProject = true } = {}) {
   setBankControlsCompact(false);
   renderBankProfileSummary();
   rebuildQuestionIndex();
-  setStatus("초기화 완료.");
+  setStatus("");
 }
 
 function removeBankRecord(code) {
@@ -950,6 +997,7 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
   }
   elements.workspace.classList.remove("hidden");
   elements.generationBar.classList.remove("hidden");
+  renderBankProfileSummary();
   setBankControlsCompact(true);
   renderBankManager();
   let cacheHits = 0;
@@ -1473,8 +1521,12 @@ function bindEvents() {
     elements.filesInput.value = "";
     await addBankFiles(files);
   });
-  elements.resetBank.addEventListener("click", () => resetBank());
+  elements.appHome.addEventListener("click", () => {
+    resetBank();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
   elements.savedBanks.addEventListener("click", showSavedBanks);
+  elements.savedBanksBack.addEventListener("click", () => { void renderSavedBankList(); });
   elements.renameBankProfile.addEventListener("click", renameActiveBankProfile);
   elements.cancelBankProfile.addEventListener("click", () => elements.bankProfileDialog.close("cancel"));
   elements.closeSavedBanks.addEventListener("click", () => elements.savedBanksDialog.close());

@@ -113,6 +113,40 @@ export async function countCachedFiles(bankId) {
   return result;
 }
 
+export async function listCachedFileAnalyses(bankId) {
+  const database = await openDatabase();
+  if (!database) return [];
+  const transaction = database.transaction(FILE_STORE, "readonly");
+  const done = transactionDone(transaction);
+  const result = [];
+  const request = transaction.objectStore(FILE_STORE).index("bankId").openKeyCursor(IDBKeyRange.only(bankId));
+  request.addEventListener("success", () => {
+    const cursor = request.result;
+    if (!cursor) return;
+    const [cachedBankId, ruleId, analysisVersion, relativePath, size, lastModified] = String(cursor.primaryKey).split("\u0001");
+    result.push({
+      cacheKey: cursor.primaryKey,
+      bankId: cachedBankId,
+      ruleId,
+      analysisVersion: Number(analysisVersion),
+      identity: {
+        name: relativePath.split("/").at(-1),
+        relativePath,
+        size: Number(size),
+        lastModified: Number(lastModified),
+      },
+    });
+    cursor.continue();
+  });
+  await done;
+  return result
+    .sort((left, right) => String(left.identity?.relativePath || "").localeCompare(
+      String(right.identity?.relativePath || ""),
+      "ko",
+      { numeric: true, sensitivity: "base" },
+    ));
+}
+
 export async function clearBankFileAnalyses(bankId) {
   const database = await openDatabase();
   if (!database) return;

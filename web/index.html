@@ -11,22 +11,25 @@
   <body>
     <main class="shell">
       <header class="hero">
-        <h1>시험지 제작실</h1>
-        <div class="hero-bank-tools hidden" id="hero-bank-tools"></div>
+        <div class="hero-title">
+          <h1><button class="app-home" id="app-home" type="button">시험지 제작실</button></h1>
+          <span class="bank-title-separator hidden" id="bank-title-separator">&gt;</span>
+          <div class="bank-profile-summary hidden" id="bank-profile-summary">
+            <span id="active-bank-name"></span>
+            <button class="text-link" id="rename-bank-profile" type="button">이름 변경</button>
+          </div>
+        </div>
+        <div class="hero-bank-tools" id="hero-bank-tools">
+          <button id="saved-banks" type="button">문제은행 목록</button>
+        </div>
       </header>
 
       <section class="upload-card" id="upload-card">
         <div class="file-drop" id="bank-drop">
-          <strong>문제은행 추가</strong>
+          <strong>새로운 문제은행 추가</strong>
           <div class="upload-actions" id="upload-actions">
             <label class="button primary" for="folder-input">문제은행 폴더 선택</label>
             <label class="button" for="files-input">HWP/HWPX 파일 추가</label>
-            <button id="saved-banks" type="button">저장된 문제은행</button>
-            <button id="reset-bank" type="button">전체 초기화</button>
-          </div>
-          <div class="bank-profile-summary hidden" id="bank-profile-summary">
-            <span id="active-bank-name"></span>
-            <button class="text-link" id="rename-bank-profile" type="button">이름 변경</button>
           </div>
           <input id="folder-input" type="file" accept=".hwp,.hwpx" webkitdirectory directory multiple />
           <input id="files-input" type="file" accept=".hwp,.hwpx,application/x-hwp,application/zip" multiple />
@@ -35,11 +38,11 @@
       </section>
 
       <section class="workspace hidden" id="workspace">
-        <div class="metrics">
-          <article><span>문제은행 파일</span><strong id="metric-files">0</strong></article>
-          <article><span>전체 문항</span><strong id="metric-total">0</strong></article>
-          <article><span>단원</span><strong id="metric-units">0</strong></article>
-          <article><span>미분류</span><strong id="metric-unclassified">0</strong></article>
+        <div class="metrics" aria-label="문제은행 정보">
+          <span>파일 <strong id="metric-files">0</strong></span>
+          <span>문항 <strong id="metric-total">0</strong></span>
+          <span>단원 <strong id="metric-units">0</strong></span>
+          <span>미분류 <strong id="metric-unclassified">0</strong></span>
         </div>
 
         <button class="bank-attention hidden" id="bank-attention" type="button">
@@ -140,7 +143,10 @@
 
     <dialog class="bank-dialog saved-banks-dialog" id="saved-banks-dialog">
       <div class="dialog-heading">
-        <h2>저장된 문제은행</h2>
+        <div class="dialog-heading-title">
+          <button class="dialog-back hidden" id="saved-banks-back" type="button" aria-label="문제은행 목록으로 돌아가기">←</button>
+          <h2 id="saved-banks-title">문제은행 목록</h2>
+        </div>
         <button id="close-saved-banks" type="button" aria-label="닫기">×</button>
       </div>
       <div class="saved-bank-list" id="saved-bank-list"></div>

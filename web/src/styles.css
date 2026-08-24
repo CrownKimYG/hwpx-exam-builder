@@ -42,10 +42,13 @@ button:focus-visible, .button:focus-visible, input:focus-visible, select:focus-v
 .primary:hover { background: #111827 !important; }
 .shell { width: min(1580px, calc(100% - 32px)); margin: 0 auto; padding: 18px 0 128px; }
 .hero { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 12px; }
-.hero-bank-tools { display: grid; min-width: 0; flex: 1 1 auto; justify-items: end; gap: 3px; }
+.hero-title { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+.app-home { min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; font-size: inherit; font-weight: inherit; letter-spacing: inherit; }
+.app-home:hover { border: 0; background: transparent; color: #4b5563; }
+.bank-title-separator { color: var(--text-muted); font-size: 15px; }
+.hero-bank-tools { display: flex; min-width: 0; flex: 1 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
 .hero-bank-tools .upload-actions { justify-content: flex-end; margin: 0; }
-.hero-bank-tools .bank-profile-summary { justify-content: flex-end; margin: 0; }
-.hero-bank-tools .status { min-height: 14px; margin: 0; text-align: right; }
+.hero-bank-tools .status { min-height: 14px; flex-basis: 100%; margin: 0; text-align: right; }
 h1 { margin: 0; font-size: 21px; font-weight: 680; letter-spacing: -.02em; }
 h2 { margin: 0; font-size: 15px; font-weight: 680; letter-spacing: -.01em; }
 .eyebrow, .file-icon { display: none; }
@@ -60,8 +63,8 @@ h2 { margin: 0; font-size: 15px; font-weight: 680; letter-spacing: -.01em; }
 .file-drop.is-dragging { border-color: var(--focus); background: #eff6ff; }
 .file-drop strong { font-size: 14px; font-weight: 650; }
 .upload-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 6px; }
-.bank-profile-summary { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; color: var(--text-muted); font-size: 11px; }
-.bank-profile-summary span { color: var(--text); font-weight: 650; }
+.bank-profile-summary { display: flex; min-width: 0; align-items: baseline; gap: 6px; color: var(--text-muted); font-size: 11px; }
+.bank-profile-summary span { overflow: hidden; color: var(--text); font-size: 17px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 button.text-link { min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-muted); font-size: 10px; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
 button.text-link:hover { border: 0; background: transparent; color: var(--text); }
 #folder-input, #files-input, #template-file, #project-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
@@ -71,11 +74,9 @@ button.text-link:hover { border: 0; background: transparent; color: var(--text);
 .status.error { color: var(--danger); }
 
 .workspace { margin-top: 12px; }
-.metrics { display: grid; grid-template-columns: repeat(4, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
-.metrics article { min-width: 0; padding: 10px 14px; }
-.metrics article + article { border-left: 1px solid var(--line); }
-.metrics span { display: block; color: var(--text-muted); font-size: 11px; }
-.metrics strong { display: block; margin-top: 2px; font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.metrics { display: flex; flex-wrap: wrap; gap: 7px 16px; padding: 1px 2px; color: var(--text-muted); font-size: 11px; }
+.metrics span { white-space: nowrap; }
+.metrics strong { margin-left: 3px; color: var(--success); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .bank-attention { display: flex; width: 100%; min-height: 34px; justify-content: space-between; margin-top: 8px; border-color: #d8b36a; background: #fffaf0; color: #765116; font-size: 11px; font-weight: 500; text-align: left; }
 .bank-attention:hover { border-color: #bf8e37; background: #fff7e6; }
 .bank-attention strong { font-size: 11px; text-decoration: underline; text-underline-offset: 2px; }
@@ -178,16 +179,22 @@ button.text-link:hover { border: 0; background: transparent; color: var(--text);
 .bank-dialog input, .bank-dialog select { width: 100%; padding: 8px; border: 1px solid var(--line-strong); border-radius: 4px; background: white; color: var(--text); }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .dialog-heading button { width: 28px; min-height: 28px; padding: 0; }
+.dialog-heading-title { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.dialog-heading-title h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dialog-heading .dialog-back { border: 0; background: transparent; font-size: 16px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .saved-banks-dialog { width: min(680px, calc(100% - 32px)); }
 .saved-bank-list { display: grid; max-height: min(65vh, 560px); overflow: auto; gap: 7px; }
 .saved-bank-empty { margin: 12px 0; color: var(--text-muted); font-size: 11px; text-align: center; }
 .saved-bank-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 9px; border: 1px solid var(--line); border-radius: 5px; }
-.saved-bank-main { display: grid; min-width: 0; gap: 3px; }
-.saved-bank-main input { padding: 6px 7px; font-size: 12px; font-weight: 650; }
+.saved-bank-main { display: grid; width: 100%; min-width: 0; min-height: 0; justify-items: start; gap: 3px; padding: 6px; border: 0; background: transparent; text-align: left; }
+.saved-bank-main:hover { border: 0; background: var(--surface-muted); }
+.saved-bank-name, .cached-file-name { max-width: 100%; overflow: hidden; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .saved-bank-meta { overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .saved-bank-actions { display: flex; gap: 5px; }
 .saved-bank-actions button { min-height: 28px; padding: 4px 7px; }
+.cached-file-row { display: grid; min-width: 0; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line); }
+.cache-list-actions { display: flex; justify-content: flex-end; padding-top: 5px; }
 .hidden { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 
@@ -202,11 +209,9 @@ button.text-link:hover { border: 0; background: transparent; color: var(--text);
 @media (max-width: 700px) {
   .shell { width: min(100% - 16px, 1580px); padding-top: 10px; }
   .hero { flex-wrap: wrap; align-items: flex-start; }
-  .hero-bank-tools { flex-basis: 100%; justify-items: end; }
+  .hero-title { max-width: 100%; flex-wrap: wrap; }
+  .hero-bank-tools { flex-basis: 100%; }
   .hero-bank-tools .upload-actions { justify-content: flex-end; }
-  .metrics { grid-template-columns: repeat(2, 1fr); }
-  .metrics article:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
-  .metrics article:nth-child(4) { border-top: 1px solid var(--line); }
   .viewer-toolbar { grid-template-columns: 1fr auto; }
   .viewer-file-control { grid-column: 1 / -1; }
   .page-controls { justify-self: start; }
