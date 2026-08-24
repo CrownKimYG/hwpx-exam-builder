@@ -35,9 +35,11 @@ import {
   estimateMaximumExamSets,
 } from "./quick-generator.js";
 import {
+  AUTO_BANK_RULE_ID,
   BANK_RULES,
   DEFAULT_BANK_RULE_ID,
   createBankProfile,
+  detectBankRule,
   describeBankFolder,
   fileAnalysisCacheKey,
   findMatchingBankProfile,
@@ -69,10 +71,12 @@ const FIELD_LABELS = {
 const QUESTION_COUNT_FIELDS = new Set(["test_questions_count", "quest_count"]);
 
 const elements = Object.fromEntries([
-  "status", "workspace", "generation-bar", "folder-input", "files-input", "reset-bank", "bank-drop", "saved-banks",
+  "status", "workspace", "generation-bar", "upload-card", "upload-actions", "hero-bank-tools", "folder-input", "files-input", "reset-bank", "bank-drop", "saved-banks",
   "bank-profile-summary", "active-bank-name", "rename-bank-profile", "bank-profile-dialog", "bank-profile-form",
-  "bank-profile-dialog-title", "bank-profile-name", "bank-profile-rule", "cancel-bank-profile", "saved-banks-dialog", "saved-bank-list", "close-saved-banks",
-  "metric-files", "metric-total", "metric-units", "metric-unclassified", "bank-file-rows", "question-metadata",
+  "bank-profile-dialog-title", "bank-profile-name", "cancel-bank-profile", "saved-banks-dialog", "saved-bank-list", "close-saved-banks",
+  "metric-files", "metric-total", "metric-units", "metric-unclassified", "bank-attention", "bank-attention-text", "bank-manager",
+  "bank-bulk-actions", "bank-selection-count", "bulk-bank-rule", "apply-bank-rule", "clear-bank-selection", "select-all-bank-files",
+  "bank-file-rows", "question-metadata",
   "preview-file", "previous-page", "next-page", "page-label", "page-stage", "page-canvas", "page-loading",
   "zoom-out", "zoom-fit", "zoom-in", "zoom-label", "toggle-quick", "quick-body", "quick-question-count",
   "quick-exam-count", "quick-seed", "matrix-wrap", "quick-status", "quick-generate", "add-exam",
@@ -96,6 +100,7 @@ const state = {
   nextExamId: 1,
   pendingProject: null,
   bankProfile: null,
+  selectedBankFiles: new Set(),
 };
 
 const templateState = {
@@ -117,6 +122,7 @@ let measureContext = null;
 let lastMeasuredFont = "";
 let activeBuild = null;
 let profileSaveQueue = Promise.resolve();
+let bankReanalysisActive = false;
 
 globalThis.measureTextWidth = (font, text) => {
   if (!measureContext) measureContext = document.createElement("canvas").getContext("2d");
@@ -176,10 +182,32 @@ function ruleLabel(ruleId) {
   return BANK_RULES.find((rule) => rule.id === ruleId)?.label || ruleId;
 }
 
+function selectedBankRuleId(ruleId) {
+  return BANK_RULES.some((rule) => rule.id === ruleId) ? ruleId : AUTO_BANK_RULE_ID;
+}
+
+function resolvedBankRuleId(ruleId) {
+  return ruleId !== AUTO_BANK_RULE_ID && BANK_RULES.some((rule) => rule.id === ruleId) ? ruleId : null;
+}
+
 function renderBankProfileSummary() {
   const profile = state.bankProfile;
   elements.bankProfileSummary.classList.toggle("hidden", !profile);
   elements.activeBankName.textContent = profile ? profile.displayName : "";
+}
+
+function setBankControlsCompact(compact) {
+  if (compact) {
+    elements.heroBankTools.append(elements.uploadActions, elements.bankProfileSummary, elements.status);
+    elements.heroBankTools.classList.remove("hidden");
+    elements.uploadCard.classList.add("hidden");
+    return;
+  }
+  elements.bankDrop.insertBefore(elements.uploadActions, elements.folderInput);
+  elements.bankDrop.insertBefore(elements.bankProfileSummary, elements.folderInput);
+  elements.uploadCard.append(elements.status);
+  elements.heroBankTools.classList.add("hidden");
+  elements.uploadCard.classList.remove("hidden");
 }
 
 function queueBankProfileSave() {
@@ -195,9 +223,15 @@ function applyBankProfileSettings(record) {
   const profile = state.bankProfile;
   if (!profile || record.bankId !== profile.bankId) return;
   const saved = profile.fileSettings?.[profileFileSettingKey(record.identity)];
-  if (!saved) return;
-  record.metadata = { ...record.metadata, ...(saved.metadata || {}) };
-  record.questionOverrides = { ...(saved.questionOverrides || {}) };
+  if (saved) {
+    record.metadata = { ...record.metadata, ...(saved.metadata || {}) };
+    record.questionOverrides = { ...(saved.questionOverrides || {}) };
+  }
+  record.selectedRuleId = selectedBankRuleId(saved?.selectedRuleId);
+  record.resolvedRuleId = resolvedBankRuleId(saved?.resolvedRuleId);
+  record.ruleId = record.resolvedRuleId || (
+    record.selectedRuleId === AUTO_BANK_RULE_ID ? DEFAULT_BANK_RULE_ID : record.selectedRuleId
+  );
 }
 
 function updateBankProfileFileSettings(record) {
@@ -207,6 +241,8 @@ function updateBankProfileFileSettings(record) {
   profile.fileSettings[profileFileSettingKey(record.identity)] = {
     metadata: structuredClone(record.metadata),
     questionOverrides: structuredClone(record.questionOverrides || {}),
+    selectedRuleId: record.selectedRuleId || AUTO_BANK_RULE_ID,
+    resolvedRuleId: record.resolvedRuleId || null,
   };
   queueBankProfileSave();
 }
@@ -214,7 +250,6 @@ function updateBankProfileFileSettings(record) {
 function requestBankProfileDetails({ profile = null, descriptor, title = "문제은행 저장" }) {
   elements.bankProfileDialogTitle.textContent = title;
   elements.bankProfileName.value = profile?.displayName || descriptor.rootFolderName;
-  elements.bankProfileRule.value = profile?.ruleId || DEFAULT_BANK_RULE_ID;
   return new Promise((resolve) => {
     const onClose = () => {
       elements.bankProfileDialog.removeEventListener("close", onClose);
@@ -224,7 +259,6 @@ function requestBankProfileDetails({ profile = null, descriptor, title = "문제
       }
       resolve({
         displayName: elements.bankProfileName.value.trim() || descriptor.rootFolderName,
-        ruleId: elements.bankProfileRule.value || DEFAULT_BANK_RULE_ID,
       });
     };
     elements.bankProfileDialog.addEventListener("close", onClose);
@@ -268,7 +302,6 @@ async function renameActiveBankProfile() {
   const details = await requestBankProfileDetails({ profile, descriptor, title: "문제은행 수정" });
   if (!details) return;
   profile.displayName = details.displayName;
-  profile.ruleId = details.ruleId;
   try {
     await saveBankProfile(profile);
   } catch (error) {
@@ -312,7 +345,7 @@ async function renderSavedBankList() {
     });
     const meta = createElement("span", {
       className: "saved-bank-meta",
-      text: `${profile.rootFolderName} · ${profile.manifest?.length || 0}개 파일 · 캐시 ${counts[index]}개 · ${ruleLabel(profile.ruleId)}`,
+      text: `${profile.rootFolderName} · ${profile.manifest?.length || 0}개 파일 · 캐시 ${counts[index]}개 · 파일별 처리 방식`,
     });
     main.append(name, meta);
     const actions = createElement("div", { className: "saved-bank-actions" });
@@ -465,13 +498,66 @@ function countsFor(record) {
   return counts;
 }
 
+const PROCESSING_STATUS_LABELS = Object.freeze({
+  pending: "대기",
+  loading: "분석 중",
+  cached: "캐시 사용",
+  complete: "완료",
+  "needs-review": "확인 필요",
+  error: "처리 실패",
+});
+
+function recordNeedsAttention(record) {
+  return record.processingStatus === "needs-review" || record.processingStatus === "error";
+}
+
+function renderBankSelectionControls() {
+  const knownCodes = new Set(state.files.map((record) => record.code));
+  state.selectedBankFiles = new Set([...state.selectedBankFiles].filter((code) => knownCodes.has(code)));
+  const count = state.selectedBankFiles.size;
+  elements.bankBulkActions.classList.toggle("hidden", count === 0);
+  elements.bankSelectionCount.textContent = `${count}개 파일 선택됨`;
+  elements.selectAllBankFiles.checked = Boolean(state.files.length) && count === state.files.length;
+  elements.selectAllBankFiles.indeterminate = count > 0 && count < state.files.length;
+  elements.bulkBankRule.disabled = bankReanalysisActive;
+  elements.applyBankRule.disabled = bankReanalysisActive;
+  elements.clearBankSelection.disabled = bankReanalysisActive;
+}
+
+function updateBankAttention() {
+  const count = state.files.filter(recordNeedsAttention).length;
+  elements.bankAttention.classList.toggle("hidden", count === 0);
+  elements.bankAttentionText.textContent = `처리 방식을 확인해야 하는 파일이 ${count}개 있습니다.`;
+}
+
 function renderBankManager() {
   const rows = state.files.map((record) => {
-    const row = createElement("tr");
+    const row = createElement("tr", { className: recordNeedsAttention(record) ? "needs-attention" : "" });
+    row.dataset.fileCode = record.code;
+    const selectionCell = createElement("td");
+    const checkbox = createElement("input", { attributes: { type: "checkbox", "aria-label": `${record.code} 선택` } });
+    checkbox.checked = state.selectedBankFiles.has(record.code);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) state.selectedBankFiles.add(record.code);
+      else state.selectedBankFiles.delete(record.code);
+      renderBankSelectionControls();
+    });
+    selectionCell.append(checkbox);
     const codeCell = createElement("td", { text: record.code });
     const filenameCell = createElement("td", { className: "filename", text: record.file.name });
     filenameCell.title = record.file.name;
     if (record.convertedFromHwp) filenameCell.append(createElement("span", { className: "format-badge", text: "HWP → HWPX" }));
+    const ruleCell = createElement("td");
+    const rule = createElement("select", { attributes: { "aria-label": `${record.code} 처리 방식` } });
+    BANK_RULES.forEach((definition) => {
+      const option = createElement("option", { text: definition.label });
+      option.value = definition.id;
+      rule.append(option);
+    });
+    rule.value = record.selectedRuleId || AUTO_BANK_RULE_ID;
+    rule.disabled = bankReanalysisActive || record.processingStatus === "loading";
+    rule.addEventListener("change", () => { void reanalyzeBankRecords([record], rule.value); });
+    ruleCell.append(rule);
     const subjectCell = createElement("td");
     const subject = createElement("input", { attributes: { value: record.metadata.subject, "aria-label": `${record.code} 과목` } });
     subject.value = record.metadata.subject;
@@ -495,20 +581,36 @@ function renderBankManager() {
       className: "difficulty-counts",
       text: DIFFICULTIES.map((difficulty) => `${difficulty} ${counts[difficulty]}`).concat(`미분류 ${counts.미분류}`).join(" · "),
     });
-    const actionCell = createElement("td");
-    const view = createElement("button", { className: "icon-button", text: "보기", attributes: { type: "button" } });
-    view.addEventListener("click", () => activatePreviewFile(record.code));
-    const remove = createElement("button", { className: "icon-button", text: "삭제", attributes: { type: "button" } });
-    remove.addEventListener("click", () => removeBankRecord(record.code));
-    actionCell.append(view, remove);
-    if (record.error) {
-      countCell.textContent = `처리 실패: ${record.error}`;
-      countCell.title = record.error;
+    const resolvedLabel = record.selectedRuleId === AUTO_BANK_RULE_ID && record.resolvedRuleId
+      ? ` · ${ruleLabel(record.resolvedRuleId)}`
+      : "";
+    const statusCell = createElement("td", {
+      className: `processing-status ${record.processingStatus || "pending"}`,
+      text: `${PROCESSING_STATUS_LABELS[record.processingStatus] || PROCESSING_STATUS_LABELS.pending}${resolvedLabel}`,
+    });
+    statusCell.title = record.processingMessage || record.error || "";
+    if (recordNeedsAttention(record) && (record.processingMessage || record.error)) {
+      statusCell.append(createElement("small", { text: record.processingMessage || record.error }));
     }
-    row.append(codeCell, filenameCell, subjectCell, unitCell, countCell, actionCell);
+    const actionCell = createElement("td", { className: "bank-row-actions" });
+    const view = createElement("button", { className: "icon-button", text: "보기", attributes: { type: "button" } });
+    view.disabled = !record.analysis || Boolean(record.error);
+    view.addEventListener("click", () => activatePreviewFile(record.code));
+    const reanalyze = createElement("button", { className: "icon-button", text: "재분석", attributes: { type: "button" } });
+    reanalyze.disabled = bankReanalysisActive || record.processingStatus === "loading";
+    reanalyze.addEventListener("click", () => {
+      void reanalyzeBankRecords([record], record.selectedRuleId || AUTO_BANK_RULE_ID);
+    });
+    const remove = createElement("button", { className: "icon-button", text: "삭제", attributes: { type: "button" } });
+    remove.disabled = bankReanalysisActive;
+    remove.addEventListener("click", () => removeBankRecord(record.code));
+    actionCell.append(view, reanalyze, remove);
+    row.append(selectionCell, codeCell, filenameCell, ruleCell, subjectCell, unitCell, countCell, statusCell, actionCell);
     return row;
   });
   elements.bankFileRows.replaceChildren(...rows);
+  renderBankSelectionControls();
+  updateBankAttention();
 }
 
 function renderQuestionMetadata(record) {
@@ -584,6 +686,7 @@ function resetBank({ clearProject = true } = {}) {
   state.questions = [];
   state.currentFileCode = null;
   state.bankProfile = null;
+  state.selectedBankFiles.clear();
   pageCount = 0;
   currentPage = 0;
   if (clearProject) state.pendingProject = null;
@@ -594,12 +697,14 @@ function resetBank({ clearProject = true } = {}) {
   elements.pageLabel.textContent = "0 / 0";
   elements.workspace.classList.add("hidden");
   elements.generationBar.classList.add("hidden");
+  setBankControlsCompact(false);
   renderBankProfileSummary();
   rebuildQuestionIndex();
   setStatus("초기화 완료.");
 }
 
 function removeBankRecord(code) {
+  state.selectedBankFiles.delete(code);
   state.files = state.files.filter((record) => record.code !== code);
   if (state.currentFileCode === code) {
     state.currentFileCode = state.files.find((record) => record.analysis && !record.error)?.code || null;
@@ -612,10 +717,17 @@ function projectRecordFor(record) {
   return state.pendingProject?.files.find((saved) => sameFileIdentity(saved.identity, record.identity)) || null;
 }
 
-async function processBankRecord(record) {
+async function analyzeBankFileByRule(file, ruleId) {
+  if (ruleId === DEFAULT_BANK_RULE_ID) return parseHwpx(file);
+  throw new Error(`${ruleLabel(ruleId)} 처리 방식은 아직 사용할 수 없습니다.`);
+}
+
+async function processBankRecord(record, { force = false } = {}) {
   const isHwp = isLegacyHwpFile(record.file);
+  record.cacheHit = false;
+  record.cacheNeedsWrite = false;
   let cached = null;
-  if (record.bankId) {
+  if (record.bankId && !force) {
     try {
       cached = await getCachedFileAnalysis(record.bankId, record.identity, record.ruleId);
     } catch {
@@ -663,9 +775,40 @@ async function processBankRecord(record) {
     record.cacheHit = true;
     record.cacheNeedsWrite = isHwp && !cached?.normalizedBytes;
   } else {
-    record.analysis = await parseHwpx(normalized.parserFile);
+    record.analysis = await analyzeBankFileByRule(normalized.parserFile, record.ruleId);
     record.cacheNeedsWrite = Boolean(record.bankId);
   }
+}
+
+function finishProcessedRecord(record) {
+  const detectedRuleId = detectBankRule(record.analysis);
+  record.resolvedRuleId = record.selectedRuleId === AUTO_BANK_RULE_ID
+    ? detectedRuleId
+    : record.selectedRuleId;
+  record.ruleId = record.resolvedRuleId || DEFAULT_BANK_RULE_ID;
+  record.error = null;
+  const issues = [];
+  const questionCount = record.analysis?.questions?.length || 0;
+  if (!questionCount) issues.push("문항을 찾지 못했습니다.");
+  if (record.selectedRuleId === AUTO_BANK_RULE_ID && !detectedRuleId) {
+    issues.push("처리 방식을 자동으로 확정하지 못했습니다.");
+  }
+  const declared = record.metadata.declaredQuestionCount;
+  if (declared && declared !== questionCount) {
+    const warning = `파일명의 ${declared}문제와 실제 ${questionCount}문항이 다릅니다.`;
+    issues.push(warning);
+    const warnings = record.analysis?.questions?.[0]?.warnings;
+    if (warnings && !warnings.includes(warning)) warnings.push(warning);
+  }
+  record.processingMessage = issues.join(" ") || (
+    record.selectedRuleId === AUTO_BANK_RULE_ID && record.resolvedRuleId
+      ? `자동 감지: ${ruleLabel(record.resolvedRuleId)}`
+      : ""
+  );
+  record.processingStatus = issues.length
+    ? "needs-review"
+    : (record.cacheHit ? "cached" : "complete");
+  updateBankProfileFileSettings(record);
 }
 
 async function cacheProcessedRecord(record) {
@@ -680,8 +823,66 @@ async function cacheProcessedRecord(record) {
       analysis,
       normalizedBytes: record.convertedFromHwp ? record.bytes : null,
     });
+    record.cacheNeedsWrite = false;
   } catch {
     // 캐시 저장 실패는 원본 분석과 시험지 생성을 막지 않는다.
+  }
+}
+
+async function reanalyzeBankRecords(records, selectedRuleId) {
+  if (bankReanalysisActive || !BANK_RULES.some((rule) => rule.id === selectedRuleId)) return 0;
+  const targets = [...new Set(records)].filter((record) => state.files.includes(record));
+  if (!targets.length) return 0;
+  bankReanalysisActive = true;
+  elements.applyBankRule.disabled = true;
+  let failures = 0;
+  try {
+    for (let index = 0; index < targets.length; index += 1) {
+      const record = targets[index];
+      const previous = {
+        selectedRuleId: record.selectedRuleId,
+        resolvedRuleId: record.resolvedRuleId,
+        ruleId: record.ruleId,
+        analysis: record.analysis,
+        bytes: record.bytes,
+        sourceBytes: record.sourceBytes,
+        convertedFromHwp: record.convertedFromHwp,
+        cacheHit: record.cacheHit,
+        cacheNeedsWrite: record.cacheNeedsWrite,
+        processingStatus: record.processingStatus,
+        processingMessage: record.processingMessage,
+        error: record.error,
+      };
+      record.selectedRuleId = selectedRuleId;
+      record.resolvedRuleId = selectedRuleId === AUTO_BANK_RULE_ID ? null : selectedRuleId;
+      record.ruleId = record.resolvedRuleId || DEFAULT_BANK_RULE_ID;
+      record.processingStatus = "loading";
+      record.processingMessage = "";
+      record.error = null;
+      renderBankManager();
+      setStatus(`${index + 1} / ${targets.length} · ${record.file.name} 재분석 중...`, "loading");
+      try {
+        await processBankRecord(record, { force: true });
+        finishProcessedRecord(record);
+        await cacheProcessedRecord(record);
+      } catch (error) {
+        Object.assign(record, previous);
+        record.processingStatus = "error";
+        record.processingMessage = `${error.message} 이전 분석 결과를 유지합니다.`;
+        updateBankProfileFileSettings(record);
+        failures += 1;
+      }
+      rebuildQuestionIndex();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    }
+    setStatus(
+      failures ? `${targets.length}개 파일 재분석 완료 · 실패 ${failures}개` : `${targets.length}개 파일 재분석 완료`,
+      failures ? "error" : "success",
+    );
+    return failures;
+  } finally {
+    bankReanalysisActive = false;
+    renderBankManager();
   }
 }
 
@@ -719,15 +920,24 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
       error: null,
       lastPage: 0,
       bankId: folderProfile?.bankId || null,
-      ruleId: folderProfile?.ruleId || DEFAULT_BANK_RULE_ID,
+      selectedRuleId: AUTO_BANK_RULE_ID,
+      resolvedRuleId: null,
+      ruleId: DEFAULT_BANK_RULE_ID,
       cacheHit: false,
       cacheNeedsWrite: false,
+      processingStatus: "pending",
+      processingMessage: "",
     };
     applyBankProfileSettings(record);
     const saved = projectRecordFor(record);
     if (saved) {
       record.metadata = { ...record.metadata, ...saved.metadata };
       record.questionOverrides = saved.questionOverrides || {};
+      record.selectedRuleId = selectedBankRuleId(saved.selectedRuleId || record.selectedRuleId);
+      record.resolvedRuleId = resolvedBankRuleId(saved.resolvedRuleId) || (
+        record.selectedRuleId === AUTO_BANK_RULE_ID ? null : record.selectedRuleId
+      );
+      record.ruleId = record.resolvedRuleId || DEFAULT_BANK_RULE_ID;
     }
     state.files.push(record);
     additions.push(record);
@@ -740,6 +950,7 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
   }
   elements.workspace.classList.remove("hidden");
   elements.generationBar.classList.remove("hidden");
+  setBankControlsCompact(true);
   renderBankManager();
   let cacheHits = 0;
   for (let index = 0; index < additions.length; index += 1) {
@@ -748,20 +959,17 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
     setStatus(`${index + 1} / ${additions.length} · ${record.file.name} 캐시 확인 중...`, "loading");
     try {
       setStatus(`${index + 1} / ${additions.length} · ${record.file.name} ${isHwp ? "HWP 변환 또는 캐시 복원 중..." : "문항 구분 또는 캐시 복원 중..."}`, "loading");
+      record.processingStatus = "loading";
+      renderBankManager();
       await processBankRecord(record);
-      if (record.convertedFromHwp && !record.analysis.questions.length) {
-        throw new Error("HWP는 변환됐지만 [정답]·[해설] 미주가 있는 문항을 찾지 못했습니다.");
-      }
-      const declared = record.metadata.declaredQuestionCount;
-      if (declared && declared !== record.analysis.questions.length) {
-        const warning = `파일명의 ${declared}문제와 실제 ${record.analysis.questions.length}문항이 다릅니다.`;
-        const warnings = record.analysis.questions[0]?.warnings;
-        if (warnings && !warnings.includes(warning)) warnings.push(warning);
-      }
+      finishProcessedRecord(record);
       await cacheProcessedRecord(record);
       if (record.cacheHit) cacheHits += 1;
     } catch (error) {
       record.error = error.message;
+      record.processingStatus = "error";
+      record.processingMessage = error.message;
+      updateBankProfileFileSettings(record);
     }
     rebuildQuestionIndex();
     await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -776,7 +984,7 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
       // 오래된 캐시 정리에 실패해도 현재 작업은 유지한다.
     }
   }
-  applyPendingProjectSettings();
+  await applyPendingProjectSettings();
   const first = state.files.find((record) => record.analysis && !record.error);
   if (first && !state.currentFileCode) await activatePreviewFile(first.code);
   const failures = state.files.filter((record) => record.error).length;
@@ -1208,14 +1416,22 @@ function saveProject() {
   setBuildStatus("문제 본문을 제외한 프로젝트 설정 JSON을 저장했습니다.");
 }
 
-function applyPendingProjectSettings() {
+async function applyPendingProjectSettings() {
   const project = state.pendingProject;
   if (!project) return;
+  const reanalysisGroups = new Map();
   state.files.forEach((record) => {
     const saved = project.files.find((item) => sameFileIdentity(item.identity, record.identity));
     if (!saved) return;
     record.metadata = { ...record.metadata, ...saved.metadata };
     record.questionOverrides = saved.questionOverrides || {};
+    if (saved.selectedRuleId) {
+      const targetRuleId = selectedBankRuleId(saved.selectedRuleId);
+      if (targetRuleId !== record.selectedRuleId) {
+        if (!reanalysisGroups.has(targetRuleId)) reanalysisGroups.set(targetRuleId, []);
+        reanalysisGroups.get(targetRuleId).push(record);
+      }
+    }
   });
   state.quick = { ...state.quick, ...(project.quick || {}), cells: project.quick?.cells || {} };
   state.exams = (project.exams || []).map((exam) => ({ ...exam }));
@@ -1230,13 +1446,16 @@ function applyPendingProjectSettings() {
   rebuildQuestionIndex();
   renderExamDrafts();
   state.pendingProject = null;
+  for (const [ruleId, records] of reanalysisGroups) {
+    await reanalyzeBankRecords(records, ruleId);
+  }
 }
 
 async function loadProject(file) {
   try {
     const project = validateProjectSnapshot(JSON.parse(await file.text()));
     state.pendingProject = project;
-    if (state.files.length) applyPendingProjectSettings();
+    if (state.files.length) await applyPendingProjectSettings();
     setStatus(state.files.length ? "설정 적용 완료." : "설정 불러오기 완료.", "success");
   } catch (error) {
     setStatus(`프로젝트 설정 실패: ${error.message}`, "error");
@@ -1259,6 +1478,28 @@ function bindEvents() {
   elements.renameBankProfile.addEventListener("click", renameActiveBankProfile);
   elements.cancelBankProfile.addEventListener("click", () => elements.bankProfileDialog.close("cancel"));
   elements.closeSavedBanks.addEventListener("click", () => elements.savedBanksDialog.close());
+  elements.bankAttention.addEventListener("click", () => {
+    elements.bankManager.open = true;
+    window.requestAnimationFrame(() => {
+      elements.bankFileRows.querySelector("tr.needs-attention")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
+  elements.selectAllBankFiles.addEventListener("change", () => {
+    state.selectedBankFiles = elements.selectAllBankFiles.checked
+      ? new Set(state.files.map((record) => record.code))
+      : new Set();
+    renderBankManager();
+  });
+  elements.clearBankSelection.addEventListener("click", () => {
+    state.selectedBankFiles.clear();
+    renderBankManager();
+  });
+  elements.applyBankRule.addEventListener("click", async () => {
+    const targets = state.files.filter((record) => state.selectedBankFiles.has(record.code));
+    const failures = await reanalyzeBankRecords(targets, elements.bulkBankRule.value);
+    if (!failures) state.selectedBankFiles.clear();
+    renderBankManager();
+  });
   let dragDepth = 0;
   elements.bankDrop.addEventListener("dragenter", (event) => {
     event.preventDefault();

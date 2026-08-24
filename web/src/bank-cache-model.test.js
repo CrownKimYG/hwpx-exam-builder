@@ -1,12 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  AUTO_BANK_RULE_ID,
+  DEFAULT_BANK_RULE_ID,
   createBankProfile,
+  detectBankRule,
   describeBankFolder,
   fileAnalysisCacheKey,
   findMatchingBankProfile,
   hydrateBankAnalysis,
   serializeBankAnalysis,
+  updateBankProfileForFolder,
 } from "./bank-cache-model.js";
 
 function bankFile(relativePath, size, lastModified = 100) {
@@ -72,6 +76,37 @@ test("매크로 복사 분석은 DOM 필드 없이 저장하고 복원한다", (
   const hydrated = hydrateBankAnalysis(serialized);
   assert.deepEqual(hydrated.questions[0].questionElements, []);
   assert.equal(hydrated.questions[0].copyStart, 4);
+});
+
+test("새 문제은행의 처리 방식은 파일별 자동으로 저장한다", () => {
+  const descriptor = describeBankFolder([bankFile("은행/01.hwpx", 100)]);
+  const profile = createBankProfile({ displayName: "은행", descriptor, bankId: "bank-1" });
+  assert.equal(profile.ruleId, undefined);
+  assert.equal(profile.fileSettings["은행/01.hwpx"].selectedRuleId, AUTO_BANK_RULE_ID);
+  assert.equal(profile.fileSettings["은행/01.hwpx"].resolvedRuleId, null);
+});
+
+test("기존 폴더 규칙을 파일별 규칙으로 마이그레이션한다", () => {
+  const descriptor = describeBankFolder([bankFile("은행/01.hwpx", 100)]);
+  const migrated = updateBankProfileForFolder({
+    schemaVersion: 1,
+    bankId: "bank-1",
+    displayName: "은행",
+    rootFolderName: "은행",
+    manifest: descriptor.manifest,
+    ruleId: DEFAULT_BANK_RULE_ID,
+    fileSettings: {},
+  }, descriptor);
+  assert.equal(migrated.ruleId, undefined);
+  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.fileSettings["은행/01.hwpx"].selectedRuleId, DEFAULT_BANK_RULE_ID);
+  assert.equal(migrated.fileSettings["은행/01.hwpx"].resolvedRuleId, DEFAULT_BANK_RULE_ID);
+});
+
+test("문항이 있는 미주 복사 분석만 처리 방식을 확정한다", () => {
+  assert.equal(detectBankRule({ questions: [] }), null);
+  assert.equal(detectBankRule({ questions: [{ copyMode: "root-endnote-block" }] }), DEFAULT_BANK_RULE_ID);
+  assert.equal(serializeBankAnalysis({ filename: "empty.hwpx", questions: [] }), null);
 });
 
 test("파일 캐시 키는 문제은행과 파일 변경 정보를 포함한다", () => {

@@ -12,12 +12,13 @@
     <main class="shell">
       <header class="hero">
         <h1>시험지 제작실</h1>
+        <div class="hero-bank-tools hidden" id="hero-bank-tools"></div>
       </header>
 
       <section class="upload-card" id="upload-card">
         <div class="file-drop" id="bank-drop">
           <strong>문제은행 추가</strong>
-          <div class="upload-actions">
+          <div class="upload-actions" id="upload-actions">
             <label class="button primary" for="folder-input">문제은행 폴더 선택</label>
             <label class="button" for="files-input">HWP/HWPX 파일 추가</label>
             <button id="saved-banks" type="button">저장된 문제은행</button>
@@ -41,11 +42,25 @@
           <article><span>미분류</span><strong id="metric-unclassified">0</strong></article>
         </div>
 
-        <details class="bank-manager">
+        <button class="bank-attention hidden" id="bank-attention" type="button">
+          <span id="bank-attention-text"></span>
+          <strong>확인</strong>
+        </button>
+
+        <details class="bank-manager" id="bank-manager">
           <summary>문제은행 정보 수정</summary>
+          <div class="bank-bulk-actions hidden" id="bank-bulk-actions">
+            <span id="bank-selection-count"></span>
+            <select id="bulk-bank-rule" aria-label="선택 파일 처리 방식">
+              <option value="auto">자동</option>
+              <option value="macro-endnote-v1">미주 기준</option>
+            </select>
+            <button id="apply-bank-rule" type="button">적용·재분석</button>
+            <button class="text-link" id="clear-bank-selection" type="button">선택 해제</button>
+          </div>
           <div class="bank-table-wrap">
             <table class="bank-table">
-              <thead><tr><th>코드</th><th>파일</th><th>과목</th><th>단원</th><th>난이도별 문항</th><th></th></tr></thead>
+              <thead><tr><th><input id="select-all-bank-files" type="checkbox" aria-label="전체 파일 선택" /></th><th>코드</th><th>파일</th><th>처리 방식</th><th>과목</th><th>단원</th><th>난이도별 문항</th><th>상태</th><th></th></tr></thead>
               <tbody id="bank-file-rows"></tbody>
             </table>
           </div>
@@ -115,11 +130,6 @@
         <h2 id="bank-profile-dialog-title">문제은행 저장</h2>
         <label>문제은행 이름
           <input id="bank-profile-name" type="text" maxlength="80" required />
-        </label>
-        <label>처리 규칙
-          <select id="bank-profile-rule">
-            <option value="macro-endnote-v1">미주 기준 복사</option>
-          </select>
         </label>
         <div class="dialog-actions">
           <button id="cancel-bank-profile" type="button">취소</button>

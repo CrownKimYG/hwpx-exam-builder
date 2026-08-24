@@ -71,6 +71,8 @@ test("project snapshots contain identities and settings but no source bytes", ()
       identity: { name: "bank.hwpx", relativePath: "folder/bank.hwpx", size: 123, lastModified: 456 },
       metadata: { subject: "수학Ⅰ", unitName: "지수와 로그" },
       questionOverrides: { 1: "lv3" },
+      selectedRuleId: "macro-endnote-v1",
+      resolvedRuleId: "macro-endnote-v1",
       bytes: new Uint8Array([1, 2, 3]),
       questions: [{ questionText: "저장하면 안 되는 문제 본문" }],
     }],
@@ -83,4 +85,6 @@ test("project snapshots contain identities and settings but no source bytes", ()
   assert.ok(!serialized.includes("저장하면 안 되는 문제 본문"));
   assert.ok(!serialized.includes("bytes"));
   assert.equal(snapshot.files[0].questionOverrides[1], "lv3");
+  assert.equal(snapshot.files[0].selectedRuleId, "macro-endnote-v1");
+  assert.equal(snapshot.files[0].resolvedRuleId, "macro-endnote-v1");
 });

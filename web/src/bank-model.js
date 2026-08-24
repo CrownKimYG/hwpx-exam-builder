@@ -101,6 +101,8 @@ export function createProjectSnapshot(state) {
       identity: record.identity,
       metadata: record.metadata,
       questionOverrides: record.questionOverrides || {},
+      selectedRuleId: record.selectedRuleId || "auto",
+      resolvedRuleId: record.resolvedRuleId || null,
     })),
     quick: state.quick,
     exams: state.exams,
