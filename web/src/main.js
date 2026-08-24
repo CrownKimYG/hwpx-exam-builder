@@ -8,6 +8,7 @@ import {
   isLegacyHwpFile,
   isSupportedBankFile,
   normalizeBankFile,
+  repairConvertedHwpxBinData,
 } from "./hwp-converter.js";
 import { applyTemplateFieldValues, inspectTemplateFields } from "./template-fields.js";
 import {
@@ -445,7 +446,11 @@ async function addBankFiles(rawFiles, { replace = false } = {}) {
           await rhwpReady;
           const sourceDocument = new HwpDocument(sourceBytes);
           try {
-            return sourceDocument.exportHwpx();
+            const convertedBytes = sourceDocument.exportHwpx();
+            return await repairConvertedHwpxBinData(
+              convertedBytes,
+              (key) => sourceDocument.getSourceImageBytes(key),
+            );
           } finally {
             sourceDocument.free?.();
           }
