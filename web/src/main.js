@@ -71,8 +71,11 @@ import {
 } from "./handoff.js";
 import {
   appendCompletelyBlankPageHwpx,
+  insertCompletelyBlankPageBeforeEndnotesHwpx,
+  removeEndnotesHwpx,
   renumberEndnotesHwpx,
 } from "./hwpx-output.js";
+import { collectSelectedBuildWarnings } from "./build-warnings.js";
 
 const DEFAULT_TEMPLATE_URL = "./templates/basic-math-exam.hwpx";
 const FIELD_LABELS = {
@@ -90,10 +93,11 @@ const elements = Object.fromEntries([
   "metric-files", "metric-total", "metric-units", "metric-unclassified", "bank-attention", "bank-attention-text", "bank-manager",
   "bank-file-rows", "question-metadata",
   "preview-file", "previous-page", "next-page", "page-label", "page-stage", "page-canvas", "page-loading",
-  "zoom-out", "zoom-fit", "zoom-in", "zoom-label", "toggle-quick", "quick-body", "quick-question-count",
+  "zoom-out", "zoom-fit", "zoom-in", "zoom-label", "toggle-quick", "quick-body", "quick-question-count-label", "quick-question-count",
   "quick-exam-count", "quick-seed", "matrix-wrap", "quick-status", "quick-generate", "add-exam",
     "clear-exams", "exam-list", "template-file", "template-file-name", "output-type",
     "question-format", "show-subject-title", "save-handoff", "build-exams", "template-fields", "field-grid", "build-status", "cancel-build",
+    "build-warning-dialog", "build-warning-list",
 ].map((id) => [id.replace(/-([a-z])/g, (_, character) => character.toUpperCase()), document.querySelector(`#${id}`)]));
 
 const state = {
@@ -1439,6 +1443,7 @@ async function handoffEntriesFromFiles(files) {
 
 function applyHandoffExams() {
   if (!state.handoffExams.length) {
+    elements.quickQuestionCountLabel.textContent = "시험지당 문항 수";
     elements.quickExamCount.disabled = false;
     elements.templateFile.disabled = false;
     elements.addExam.disabled = false;
@@ -1446,6 +1451,7 @@ function applyHandoffExams() {
     elements.saveHandoff.disabled = !validateExamDrafts();
     return;
   }
+  elements.quickQuestionCountLabel.textContent = "이번 과목에서 추가할 문항 수";
   const missingSubject = missingSubjectFor(state.handoffExams[0].metadata);
   const currentSubject = bankSubjectForRule(state.bankProfile?.ruleId);
   elements.quickExamCount.value = String(state.handoffExams.length);
@@ -1474,6 +1480,36 @@ function applyHandoffExams() {
   state.nextExamId = state.exams.length + 1;
   renderExamDrafts();
   updateQuickEstimate();
+}
+
+function selectedBuildWarnings() {
+  const questionByCode = new Map(state.questions.map((question) => [question.code, question]));
+  const exams = state.exams.map((exam) => ({
+    title: exam.title,
+    codes: examCodes(exam),
+  }));
+  return collectSelectedBuildWarnings(exams, questionByCode, state.bankProfile?.ruleId);
+}
+
+function confirmBuildWarnings() {
+  const warnings = selectedBuildWarnings();
+  if (!warnings.length) return Promise.resolve(true);
+  elements.buildWarningList.replaceChildren();
+  warnings.forEach((record) => {
+    const item = createElement("div", { className: "build-warning-item" });
+    item.append(
+      createElement("strong", { text: `${record.examTitle} · ${record.code}` }),
+      createElement("span", { text: record.warnings.join(" · ") }),
+    );
+    elements.buildWarningList.append(item);
+  });
+  elements.buildWarningDialog.returnValue = "";
+  elements.buildWarningDialog.showModal();
+  return new Promise((resolve) => {
+    elements.buildWarningDialog.addEventListener("close", () => {
+      resolve(elements.buildWarningDialog.returnValue === "confirm");
+    }, { once: true });
+  });
 }
 
 async function loadHandoffFiles(files) {
@@ -1548,7 +1584,20 @@ async function assembleExamVariant({ exam, selectedQuestions, variant, transform
   return bytes;
 }
 
-async function verifyExamVariant(bytes, { exam, selectedQuestions, variant, transformMode }) {
+function renderedPageIsBlank(svg) {
+  const documentNode = new DOMParser().parseFromString(svg, "image/svg+xml");
+  const hasText = Array.from(documentNode.querySelectorAll("text"))
+    .some((node) => String(node.textContent || "").replace(/\s+/g, ""));
+  return !hasText && !documentNode.querySelector("image");
+}
+
+async function verifyExamVariant(bytes, {
+  exam,
+  selectedQuestions,
+  variant,
+  transformMode,
+  expectedBlankPageIndex = null,
+}) {
   const totalCount = (exam.existingQuestionCount || 0) + selectedQuestions.length;
   await validateGeneratedExamHwpx(bytes, {
     expectedQuestionCount: totalCount,
@@ -1559,13 +1608,25 @@ async function verifyExamVariant(bytes, { exam, selectedQuestions, variant, tran
     expectHiddenEndnotes: variant === "problem",
     preserveOriginalContent: true,
   });
-  const pages = await pageCountFor(bytes);
-  if (!pages) throw new Error(`${exam.title}에 표시할 페이지가 없습니다.`);
-  return pages;
+  await rhwpReady;
+  const documentNode = new HwpDocument(bytes);
+  try {
+    const pages = documentNode.pageCount();
+    if (!pages) throw new Error(`${exam.title}에 표시할 페이지가 없습니다.`);
+    if (expectedBlankPageIndex !== null) {
+      if (expectedBlankPageIndex >= pages || !renderedPageIsBlank(documentNode.renderPageSvg(expectedBlankPageIndex))) {
+        throw new Error(`${exam.title}의 문제와 해설 사이에 완전한 빈 페이지를 만들지 못했습니다.`);
+      }
+    }
+    return pages;
+  } finally {
+    documentNode.free?.();
+  }
 }
 
 async function saveHandoffExams() {
   if (!validateExamDrafts() || state.handoffExams.length) return;
+  if (!await confirmBuildWarnings()) return;
   const build = { cancelled: false };
   activeBuild = build;
   elements.saveHandoff.disabled = true;
@@ -1617,6 +1678,7 @@ async function saveHandoffExams() {
 
 async function buildAllExams() {
   if (!validateExamDrafts()) return;
+  if (!await confirmBuildWarnings()) return;
   const build = { cancelled: false };
   activeBuild = build;
   elements.buildExams.disabled = true;
@@ -1635,18 +1697,28 @@ async function buildAllExams() {
       const selectedQuestions = examCodes(exam).map((code) => questionByCode.get(code));
       setBuildStatus(`${examIndex + 1}/${state.exams.length} · ${exam.title} 문제 영역 확인 중...`);
       let problemBytes = await assembleExamVariant({ exam, selectedQuestions, variant: "problem", transformMode, build });
-      const problemPages = await pageCountFor(problemBytes);
-      const needsBlankPage = problemPages % 2 === 1;
-      if (needsBlankPage) problemBytes = await appendCompletelyBlankPageHwpx(problemBytes);
+      const problemOutputPages = await pageCountFor(problemBytes);
+      const problemContentPages = await pageCountFor(await removeEndnotesHwpx(problemBytes));
+      const problemOutputNeedsBlankPage = problemOutputPages % 2 === 1;
+      const solutionNeedsBlankPage = problemContentPages % 2 === 1;
+      if (problemOutputNeedsBlankPage) problemBytes = await appendCompletelyBlankPageHwpx(problemBytes);
       for (const variant of variants) {
         setBuildStatus(`${examIndex + 1}/${state.exams.length} · ${exam.title} ${variant === "problem" ? "문제지" : "해설 포함"} 생성 중...`);
         let bytes = variant === "problem"
           ? problemBytes
           : await assembleExamVariant({ exam, selectedQuestions, variant, transformMode, build });
-        if (variant !== "problem" && needsBlankPage) bytes = await appendCompletelyBlankPageHwpx(bytes);
+        if (variant !== "problem" && solutionNeedsBlankPage) {
+          bytes = await insertCompletelyBlankPageBeforeEndnotesHwpx(bytes);
+        }
         bytes = await finalizeHandoffHwpx(bytes);
         ensureBuildActive(build);
-        await verifyExamVariant(bytes, { exam, selectedQuestions, variant, transformMode });
+        await verifyExamVariant(bytes, {
+          exam,
+          selectedQuestions,
+          variant,
+          transformMode,
+          expectedBlankPageIndex: variant !== "problem" && solutionNeedsBlankPage ? problemContentPages : null,
+        });
         outputs.push({
           bytes,
           filename: `${sanitizeFilename(exam.title)}_${variant === "problem" ? "문제" : (outputType === "solution" ? "해설포함" : "해설")}.hwpx`,

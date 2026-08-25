@@ -24,7 +24,7 @@ button, .button {
   justify-content: center;
   padding: 6px 10px;
   border: 1px solid var(--line-strong);
-  border-radius: 5px;
+  border-radius: 0;
   background: var(--surface);
   color: #303030;
   font-size: 12px;
@@ -128,10 +128,9 @@ button.text-link:hover { border: 0; background: transparent; color: var(--text);
 
 .app-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(390px, 2fr); gap: 10px; margin-top: 10px; align-items: start; }
 .viewer-card { position: sticky; top: 8px; overflow: hidden; }
-.viewer-toolbar { display: flex; align-items: end; min-height: 50px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-.viewer-file-control { display: grid; min-width: 0; justify-items: start; gap: 3px; }
-.viewer-file-control label { color: var(--text-muted); font-size: 10px; font-weight: 600; }
-.viewer-file-control select { width: min(100%, 420px); padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 4px; background: white; font-size: 12px; }
+.viewer-toolbar { display: flex; align-items: end; min-height: 44px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.viewer-file-control { display: grid; width: 100%; min-width: 0; }
+.viewer-file-control select { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 4px; background: white; font-size: 12px; }
 .preview-console { position: sticky; top: 10px; z-index: 6; display: flex; width: max-content; align-items: center; gap: 6px; margin: 0 auto -42px; padding: 5px; border: 1px solid rgba(255,255,255,.22); border-radius: 8px; background: rgba(24,24,27,.78); box-shadow: 0 4px 14px rgba(0,0,0,.18); backdrop-filter: blur(8px); }
 .preview-console-divider { width: 1px; height: 20px; background: rgba(255,255,255,.25); }
 .page-controls, .zoom-controls { display: flex; align-items: center; gap: 4px; }
@@ -175,11 +174,11 @@ button.text-link:hover { border: 0; background: transparent; color: var(--text);
 .exam-validation.error { color: var(--danger); }
 
 .generation-bar { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; border-top: 1px solid var(--line-strong); background: white; }
-.generation-inner { display: grid; grid-template-columns: minmax(210px, 1fr) 145px 125px auto auto auto minmax(130px, auto); gap: 8px; align-items: end; width: min(1580px, calc(100% - 32px)); margin: 0 auto; padding: 8px 0; }
+.generation-inner { display: grid; grid-template-columns: minmax(210px, 1fr) 118px 98px auto auto auto auto; gap: 8px; align-items: end; width: min(1580px, calc(100% - 32px)); margin: 0 auto; padding: 8px 0; }
 .template-control { display: flex; min-width: 0; align-items: center; gap: 7px; }
 .template-control span { overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .check-control { display: flex !important; grid-auto-flow: column; align-items: center; justify-content: start; gap: 5px !important; padding-bottom: 6px; white-space: nowrap; }
-.generate { min-height: 34px; padding: 7px 13px; }
+.generate { width: auto; min-width: 116px; min-height: 34px; padding: 7px 10px; }
 .template-fields { width: min(1580px, calc(100% - 32px)); margin: 0 auto; border-top: 1px solid var(--line); }
 .template-fields summary { padding: 6px 0; color: var(--text-muted); font-size: 10px; font-weight: 600; cursor: pointer; }
 .field-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding-bottom: 7px; }
@@ -197,6 +196,11 @@ button.text-link:hover { border: 0; background: transparent; color: var(--text);
 .bank-dialog input, .bank-dialog select { width: 100%; padding: 8px; border: 1px solid var(--line-strong); border-radius: 4px; background: white; color: var(--text); }
 .dialog-summary { margin: 0; color: var(--text-muted); font-size: 11px; }
 .dialog-error { min-height: 16px; margin: 0; color: var(--danger); font-size: 10px; }
+.build-warning-dialog { width: min(560px, calc(100% - 32px)); }
+.build-warning-list { display: grid; max-height: min(52vh, 420px); overflow: auto; gap: 6px; }
+.build-warning-item { display: grid; gap: 3px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-muted); }
+.build-warning-item strong { font-size: 11px; }
+.build-warning-item span { color: var(--danger); font-size: 10px; line-height: 1.45; }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .dialog-heading button { width: 28px; min-height: 28px; padding: 0; }
 .dialog-heading-title { display: flex; min-width: 0; align-items: center; gap: 7px; }

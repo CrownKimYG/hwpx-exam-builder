@@ -75,8 +75,7 @@
           <section class="viewer-card" aria-labelledby="viewer-title">
             <header class="viewer-toolbar">
               <div class="viewer-file-control">
-                <label for="preview-file">파일 선택</label>
-                <select id="preview-file"></select>
+                <select id="preview-file" aria-label="미리보기 파일 선택"></select>
               </div>
             </header>
             <h2 class="sr-only" id="viewer-title">원본 페이지 미리보기</h2>
@@ -107,7 +106,7 @@
               </div>
               <div id="quick-body">
                 <div class="quick-settings">
-                  <label>시험지당 문항 수<input id="quick-question-count" type="number" min="1" max="100" value="8" /></label>
+                  <label><span id="quick-question-count-label">시험지당 문항 수</span><input id="quick-question-count" type="number" min="1" max="100" value="8" /></label>
                   <label>생성할 시험지 수<input id="quick-exam-count" type="number" min="1" value="1" /></label>
                   <label>랜덤 시드<input id="quick-seed" type="text" /></label>
                 </div>
@@ -153,6 +152,18 @@
       </form>
     </dialog>
 
+    <dialog class="bank-dialog build-warning-dialog" id="build-warning-dialog">
+      <form method="dialog">
+        <h2>누락 항목 확인</h2>
+        <p class="dialog-summary">선택한 국어 문항에 정답 또는 해설 누락이 있습니다.</p>
+        <div class="build-warning-list" id="build-warning-list"></div>
+        <div class="dialog-actions">
+          <button value="cancel" type="submit">취소</button>
+          <button class="primary" value="confirm" type="submit">계속 생성</button>
+        </div>
+      </form>
+    </dialog>
+
     <footer class="generation-bar hidden" id="generation-bar">
       <div class="generation-inner">
         <div class="template-control">
@@ -177,7 +188,7 @@
         <label class="check-control"><input id="show-subject-title" type="checkbox" />과목 제목</label>
         <label class="button" for="handoff-input">인계 파일 불러오기</label>
         <button id="save-handoff" type="button" disabled>인계용 HWPX 저장</button>
-        <button class="primary generate" id="build-exams" type="button" disabled>생성·다운로드</button>
+        <button class="primary generate" id="build-exams" type="button" disabled>최종 시험지 생성</button>
       </div>
       <details class="template-fields hidden" id="template-fields">
         <summary>템플릿 누름틀 공통값</summary>

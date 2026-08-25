@@ -42,6 +42,52 @@ export async function renumberEndnotesHwpx(bytes, startAt = 1) {
   return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 }
 
+export async function removeEndnotesHwpx(bytes) {
+  const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  for (const name of sectionNames(zip)) {
+    const documentNode = parseXml(await zip.file(name).async("string"), name);
+    descendants(documentNode.documentElement, "endNote").forEach((note) => note.remove());
+    zip.file(name, new XMLSerializer().serializeToString(documentNode));
+  }
+  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+}
+
+function emptyPageBreakParagraph(documentNode, prototype) {
+  const paragraph = documentNode.importNode(prototype, false);
+  paragraph.setAttribute("id", String(Math.floor(2_000_000_000 + Math.random() * 500_000_000)));
+  paragraph.setAttribute("pageBreak", "1");
+  paragraph.setAttribute("columnBreak", "0");
+  const runPrototype = descendants(prototype, "run")[0];
+  const run = runPrototype
+    ? documentNode.importNode(runPrototype, false)
+    : documentNode.createElementNS(prototype.namespaceURI, `${prototype.prefix || "hp"}:run`);
+  const textNode = documentNode.createElementNS(prototype.namespaceURI, `${prototype.prefix || "hp"}:t`);
+  textNode.textContent = "";
+  run.appendChild(textNode);
+  paragraph.appendChild(run);
+  return paragraph;
+}
+
+export async function insertCompletelyBlankPageBeforeEndnotesHwpx(bytes) {
+  const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  const names = sectionNames(zip);
+  let target = null;
+  for (const name of names) {
+    const documentNode = parseXml(await zip.file(name).async("string"), name);
+    if (descendants(documentNode.documentElement, "endNote").length) target = { name, documentNode };
+  }
+  if (!target) throw new Error("빈 페이지 뒤에 배치할 해설 미주를 찾지 못했습니다.");
+  const paragraphPrototype = Array.from(target.documentNode.documentElement.children)
+    .find((element) => localName(element) === "p");
+  if (!paragraphPrototype) throw new Error("문제와 해설 사이의 빈 페이지를 만들 문단 서식이 없습니다.");
+  target.documentNode.documentElement.append(
+    emptyPageBreakParagraph(target.documentNode, paragraphPrototype),
+    emptyPageBreakParagraph(target.documentNode, paragraphPrototype),
+  );
+  zip.file(target.name, new XMLSerializer().serializeToString(target.documentNode));
+  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+}
+
 function blankSectionFrom(sourceDocument) {
   const sourceRoot = sourceDocument.documentElement;
   const blankDocument = sourceDocument.implementation.createDocument(

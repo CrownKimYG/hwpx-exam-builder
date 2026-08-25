@@ -52,7 +52,12 @@ def test_web_uses_multi_bank_exam_workspace() -> None:
     assert 'setStatus("준비 완료.")' not in main_js
     assert 'class="subtitle"' not in html
     assert 'class="privacy-badge"' not in html
-    assert 'content="multi-bank-v2"' in html
+    assert 'content="subject-handoff-v1"' in html
+    assert 'id="bank-home"' in html
+    assert 'id="bank-list-button"' not in html
+    assert 'id="quick-question-count-label"' in html
+    assert 'id="build-warning-dialog"' in html
+    assert "최종 시험지 생성" in html
     assert "basic-math-exam.hwpx" in main_js
     assert 'id="save-project"' not in html
     assert 'id="project-file"' not in html
