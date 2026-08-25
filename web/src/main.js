@@ -3,7 +3,7 @@ import rhwpWasmUrl from "@rhwp/core/rhwp_bg.wasm?url";
 import JSZip from "jszip";
 import "./styles.css";
 import { parseHwpx, prepareHwpxForPreview, sanitizeHwpxWatermarks } from "./parser.js";
-import { EBSI_KOREAN_COPY_MODE, parseEbsiKoreanHwpx } from "./ebsi-korean-parser.js";
+import { EBSI_KOREAN_PREPROCESS_MODE, prepareEbsiKoreanHwpx } from "./ebsi-korean-parser.js";
 import {
   bankPreviewBytes,
   isLegacyHwpFile,
@@ -20,6 +20,7 @@ import {
 } from "./template-builder.js";
 import {
   DIFFICULTIES,
+  isEbsiKoreanBankFilename,
   parseBankFilename,
   parseQuestionCodes,
   projectFileIdentity,
@@ -761,40 +762,48 @@ function removeBankRecord(code) {
   rebuildQuestionIndex();
 }
 
-async function analyzeBankFileByRule(file, ruleId, { autoDetect = false } = {}) {
-  if (autoDetect && /EBS.*국어영역/u.test(file.name.normalize("NFC"))) {
-    return parseEbsiKoreanHwpx(file);
+async function analyzeBankFileByRule(file, ruleId) {
+  if (ruleId === DEFAULT_BANK_RULE_ID) {
+    return { analysis: await parseHwpx(file), bytes: null };
   }
-  if (ruleId === DEFAULT_BANK_RULE_ID) return parseHwpx(file);
-  if (ruleId === EBSI_KOREAN_RULE_ID) return parseEbsiKoreanHwpx(file);
+  if (ruleId === EBSI_KOREAN_RULE_ID) return prepareEbsiKoreanHwpx(file);
   throw new Error(`${ruleLabel(ruleId)} 처리 방식은 아직 사용할 수 없습니다.`);
 }
 
 async function processBankRecord(record, { force = false } = {}) {
   const isHwp = isLegacyHwpFile(record.file);
+  const filenameRuleId = isEbsiKoreanBankFilename(record.file.name)
+    ? EBSI_KOREAN_RULE_ID
+    : null;
+  const analysisRuleId = record.selectedRuleId === AUTO_BANK_RULE_ID && filenameRuleId
+    ? filenameRuleId
+    : record.ruleId;
+  record.ruleId = analysisRuleId;
   record.cacheHit = false;
   record.cacheNeedsWrite = false;
+  record.preprocessedFromEbsi = false;
   let cached = null;
   if (record.bankId && !force) {
     try {
-      cached = await getCachedFileAnalysis(record.bankId, record.identity, record.ruleId);
+      cached = await getCachedFileAnalysis(record.bankId, record.identity, analysisRuleId);
     } catch {
       cached = null;
     }
   }
   const cachedAnalysis = hydrateBankAnalysis(cached?.analysis);
-  if (!isHwp && cachedAnalysis) {
+  if (cachedAnalysis && cached?.normalizedBytes) {
+    record.bytes = new Uint8Array(cached.normalizedBytes);
+    record.sourceBytes = isHwp ? null : new Uint8Array(await record.file.arrayBuffer());
+    record.convertedFromHwp = isHwp;
+    record.preprocessedFromEbsi = analysisRuleId === EBSI_KOREAN_RULE_ID;
+    record.analysis = cachedAnalysis;
+    record.cacheHit = true;
+    return;
+  } else if (!isHwp && cachedAnalysis) {
     const bytes = new Uint8Array(await record.file.arrayBuffer());
     record.bytes = bytes;
     record.sourceBytes = bytes;
     record.convertedFromHwp = false;
-    record.analysis = cachedAnalysis;
-    record.cacheHit = true;
-    return;
-  } else if (cachedAnalysis && cached.normalizedBytes) {
-    record.bytes = new Uint8Array(cached.normalizedBytes);
-    record.sourceBytes = null;
-    record.convertedFromHwp = true;
     record.analysis = cachedAnalysis;
     record.cacheHit = true;
     return;
@@ -823,9 +832,12 @@ async function processBankRecord(record, { force = false } = {}) {
     record.cacheHit = true;
     record.cacheNeedsWrite = isHwp && !cached?.normalizedBytes;
   } else {
-    record.analysis = await analyzeBankFileByRule(normalized.parserFile, record.ruleId, {
-      autoDetect: record.selectedRuleId === AUTO_BANK_RULE_ID && !record.resolvedRuleId,
-    });
+    const analyzed = await analyzeBankFileByRule(normalized.parserFile, analysisRuleId);
+    record.analysis = analyzed.analysis;
+    if (analyzed.bytes) {
+      record.bytes = analyzed.bytes;
+      record.preprocessedFromEbsi = analysisRuleId === EBSI_KOREAN_RULE_ID;
+    }
     record.cacheNeedsWrite = Boolean(record.bankId);
   }
 }
@@ -871,7 +883,7 @@ async function cacheProcessedRecord(record) {
       identity: record.identity,
       ruleId: record.ruleId,
       analysis,
-      normalizedBytes: record.convertedFromHwp ? record.bytes : null,
+      normalizedBytes: record.convertedFromHwp || record.preprocessedFromEbsi ? record.bytes : null,
     });
     record.cacheNeedsWrite = false;
   } catch {
@@ -897,6 +909,7 @@ async function reanalyzeBankRecords(records, selectedRuleId) {
         bytes: record.bytes,
         sourceBytes: record.sourceBytes,
         convertedFromHwp: record.convertedFromHwp,
+        preprocessedFromEbsi: record.preprocessedFromEbsi,
         cacheHit: record.cacheHit,
         cacheNeedsWrite: record.cacheNeedsWrite,
         processingStatus: record.processingStatus,
@@ -967,6 +980,7 @@ async function addBankFiles(rawFiles, { replace = false, folderMode = false } = 
       bytes: null,
       sourceBytes: null,
       convertedFromHwp: false,
+      preprocessedFromEbsi: false,
       error: null,
       lastPage: 0,
       bankId: folderProfile?.bankId || null,
@@ -1360,13 +1374,13 @@ async function buildAllExams() {
       const codes = examCodes(exam);
       const selectedQuestions = codes.map((code) => questionByCode.get(code));
       const hasEbsiKorean = selectedQuestions.some((question) => (
-        question.copyMode === EBSI_KOREAN_COPY_MODE
+        question.preprocessMode === EBSI_KOREAN_PREPROCESS_MODE
       ));
       const expectedEndnoteCount = selectedQuestions.filter((question) => (
         question.copyMode === "root-endnote-block"
       )).length;
       const minimumDefaultPages = new Set(selectedQuestions.map((question) => (
-        question.copyMode === EBSI_KOREAN_COPY_MODE
+        question.preprocessMode === EBSI_KOREAN_PREPROCESS_MODE
           ? `${question.fileCode}:${question.sectionName}:${question.passageGroupId}`
           : question.code
       ))).size;

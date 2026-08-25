@@ -5,7 +5,7 @@ const SECTION_RE = /^Contents\/section\d+\.xml$/;
 const SLOT_RE = /^#(\d+)$/;
 const SEQUENTIAL_MARKER = "{{QUESTIONS}}";
 const EXPLANATION_MARKER = "#해설";
-const EBSI_KOREAN_COPY_MODE = "ebsi-korean-passage";
+const EBSI_KOREAN_PREPROCESS_MODE = "ebsi-endnote-v1";
 const CIRCLED_CHOICE_RE = /[①②③④⑤]/g;
 const CIRCLED_CHOICES = ["①", "②", "③", "④", "⑤"];
 
@@ -25,7 +25,11 @@ function textOf(element) {
 }
 
 export function answerChoiceSymbolFromText(value) {
-  return String(value || "").match(/\[정답\][\s\S]*?([①②③④⑤])/)?.[1] || null;
+  const answer = String(value || "").match(/\[정답\]([\s\S]*)/)?.[1] || "";
+  const symbol = answer.match(/[①②③④⑤]/)?.[0];
+  if (symbol) return symbol;
+  const digit = answer.match(/(?:^|\s)([1-5])(?:\s|$)/)?.[1];
+  return digit ? CIRCLED_CHOICES[Number(digit) - 1] : null;
 }
 
 export function hasCompleteChoiceSet(value) {
@@ -401,7 +405,7 @@ function questionIdentity(question) {
 }
 
 function isEbsiKoreanQuestion(question) {
-  return question.copyMode === EBSI_KOREAN_COPY_MODE;
+  return question.preprocessMode === EBSI_KOREAN_PREPROCESS_MODE;
 }
 
 function passageGroupKey(question) {
@@ -421,22 +425,6 @@ function assertQuestionReady(question) {
     ) {
       throw new Error(`${identity}의 미주 기준 복사 범위를 확인하지 못했습니다.`);
     }
-    return;
-  }
-  if (isEbsiKoreanQuestion(question)) {
-    const ranges = [
-      [question.passageStart, question.passageEnd, "지문"],
-      [question.copyStart, question.copyEnd, "문제"],
-      [question.answerStart, question.answerEnd, "정답"],
-      [question.explanationStart, question.explanationEnd, "해설"],
-    ];
-    const invalid = ranges.find(([start, end]) => (
-      !Number.isInteger(start) || !Number.isInteger(end) || end <= start
-    ));
-    if (invalid) throw new Error(`${identity}의 ${invalid[2]} 복사 범위를 확인하지 못했습니다.`);
-    if (!String(question.questionText || "").trim()) throw new Error(`${identity}의 문제 본문이 비어 있습니다.`);
-    if (!String(question.answerText || "").trim()) throw new Error(`${identity}의 정답이 비어 있습니다.`);
-    if (!String(question.explanationText || "").trim()) throw new Error(`${identity}의 해설이 비어 있습니다.`);
     return;
   }
   if (!question.questionElements?.length || !hasQuestionContent(question.questionElements)) {
@@ -1409,61 +1397,7 @@ function prefixQuestionNumber(elements, outputIndex) {
   if (textNode) textNode.textContent = `${outputIndex}. ${textNode.textContent || ""}`;
 }
 
-function sourceRangeClones(question, targetDocument, context, start, end) {
-  const sourceDocument = context.sectionDocuments.get(question.sectionName);
-  if (!sourceDocument) throw new Error(`${question.code}의 ${question.sectionName}을 찾지 못했습니다.`);
-  return Array.from(sourceDocument.documentElement.children)
-    .slice(start, end)
-    .map((element) => targetDocument.importNode(element, true));
-}
-
-function replaceFirstLabel(elements, label, replacement) {
-  const node = elements.flatMap((element) => descendants(element, "t"))
-    .find((textNode) => (textNode.textContent || "").includes(label));
-  if (node) node.textContent = node.textContent.replace(label, replacement);
-}
-
-function solutionParagraphs(
-  question,
-  targetDocument,
-  context,
-  outputIndex,
-  transformMode,
-  { includePassageExplanation = false } = {},
-) {
-  if (isEbsiKoreanQuestion(question)) {
-    const passageExplanation = includePassageExplanation
-      ? sourceRangeClones(
-        question,
-        targetDocument,
-        context,
-        question.passageExplanationStart,
-        question.passageExplanationEnd,
-      )
-      : [];
-    const answer = sourceRangeClones(
-      question,
-      targetDocument,
-      context,
-      question.answerStart,
-      question.answerEnd,
-    );
-    const explanation = sourceRangeClones(
-      question,
-      targetDocument,
-      context,
-      question.explanationStart,
-      question.explanationEnd,
-    );
-    replaceFirstLabel(passageExplanation, "[해설]", "지문 해설");
-    replaceFirstLabel(answer, "[정답/모범답안]", `${outputIndex}. 정답`);
-    replaceFirstLabel(explanation, "[해설]", "해설");
-    const result = [...passageExplanation, ...answer, ...explanation];
-    result.forEach((paragraph) => removeLayoutControls(paragraph));
-    restoreVisibleSolutionFormatting(context.headerDocument, result);
-    remapCloneReferences(result, context);
-    return result;
-  }
+function solutionParagraphs(question, targetDocument, context, outputIndex, transformMode) {
   const answer = targetDocument.importNode(question.answerElement, true);
   const explanation = (question.explanationElements || []).map((element) => targetDocument.importNode(element, true));
   const result = [answer, ...explanation];
@@ -1516,23 +1450,16 @@ function addSolutionsAppendix(
     parent.appendChild(heading);
     insertionPoint = null;
   }
-  let previousPassageKey = null;
   selectedQuestions.forEach((question, index) => {
-    if (question.copyMode === "root-endnote-block") {
-      previousPassageKey = null;
-      return;
-    }
+    if (question.copyMode === "root-endnote-block") return;
     const context = sourceContexts.get(question.fileCode);
-    const currentPassageKey = passageGroupKey(question);
     const paragraphs = solutionParagraphs(
       question,
       targetDocument,
       context,
       index + 1,
       transformMode,
-      { includePassageExplanation: currentPassageKey !== previousPassageKey },
     );
-    previousPassageKey = currentPassageKey;
     // Explanation equations are frequently taller than the surrounding text.
     // A wider minimum prevents the renderer from stacking adjacent lines.
     ensureLeftParagraphStyles(outputHeader, paragraphs, { minimumLineSpacingPercent: 220 });
@@ -1668,9 +1595,11 @@ export async function buildExamFromSourcesHwpx(
       ? children.slice(question.passageStart, question.passageEnd)
         .map((element) => targetDocument.importNode(element, true))
       : [];
-    const clones = [...passageClones, ...questionClones];
+    let clones = [...passageClones, ...questionClones];
     if (question.copyMode === "root-endnote-block") {
-      transformMacroQuestionClones(clones, question, targetDocument, transformMode);
+      const macroClones = isEbsiKoreanQuestion(question) ? questionClones : clones;
+      transformMacroQuestionClones(macroClones, question, targetDocument, transformMode);
+      if (macroClones !== clones) clones = [...passageClones, ...questionClones];
     } else if (isEbsiKoreanQuestion(question)) {
       if (transformMode === "essay") rewriteEssayEnding(questionClones);
     } else {

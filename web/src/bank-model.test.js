@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   createProjectSnapshot,
   difficultyFromLabel,
+  isEbsiKoreanBankFilename,
   normalizeQuestionCode,
   parseBankFilename,
   parseQuestionCodes,
@@ -26,6 +27,7 @@ test("parses EBSi Korean filename metadata", () => {
     ["[26052]_EBS 2027학년도 수능완성 국어영역 독서ㆍ문학ㆍ언어와 매체_(285).hwpx", "26052", "수능완성 독서ㆍ문학ㆍ언어와 매체", 285],
   ];
   cases.forEach(([filename, unitNumber, unitName, declaredQuestionCount]) => {
+    assert.equal(isEbsiKoreanBankFilename(filename), true);
     assert.deepEqual(parseBankFilename(filename), {
       subject: "국어",
       unitNumber,
@@ -35,6 +37,7 @@ test("parses EBSi Korean filename metadata", () => {
       parsed: true,
     });
   });
+  assert.equal(isEbsiKoreanBankFilename("[26001]_EBS 2027학년도 수능특강 수학영역 수학Ⅰ_(315).hwpx"), false);
 });
 
 test("parses HWP filename metadata with the HWPX rule", () => {

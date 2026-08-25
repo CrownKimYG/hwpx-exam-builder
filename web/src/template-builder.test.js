@@ -9,6 +9,7 @@ import {
 
 test("미주 정답에서 객관식 번호를 직접 찾는다", () => {
   assert.equal(answerChoiceSymbolFromText("[정답] ④"), "④");
+  assert.equal(answerChoiceSymbolFromText("[정답] 4"), "④");
   assert.equal(answerChoiceSymbolFromText("[정답] 21"), null);
 });
 

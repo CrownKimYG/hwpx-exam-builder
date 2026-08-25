@@ -58,7 +58,7 @@ def test_web_uses_multi_bank_exam_workspace() -> None:
     assert 'id="project-file"' not in html
     assert "createProjectSnapshot" not in main_js
     assert 'value="ebsi-korean-v1"' in html
-    assert "parseEbsiKoreanHwpx" in main_js
+    assert "prepareEbsiKoreanHwpx" in main_js
     assert "parseBankFilename" in bank_js
     assert "estimateMaximumExamSets" in quick_js
     assert 'SEQUENTIAL_MARKER = "{{QUESTIONS}}"' in builder_js

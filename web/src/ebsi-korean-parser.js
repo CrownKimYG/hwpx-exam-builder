@@ -1,7 +1,7 @@
 import JSZip from "jszip";
 import { hasRenderableElementContent, plainText } from "./parser.js";
 
-export const EBSI_KOREAN_COPY_MODE = "ebsi-korean-passage";
+export const EBSI_KOREAN_PREPROCESS_MODE = "ebsi-endnote-v1";
 
 const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const PASSAGE_MARKER_RE = /^\[(\d{1,3})[~～](\d{1,3})\]\[지문\]$/;
@@ -161,7 +161,134 @@ function textFromRange(texts, start, end, labels = []) {
     .trim();
 }
 
-export async function parseEbsiKoreanHwpx(file) {
+const localName = (node) => node.localName || node.nodeName.split(":").pop();
+const descendants = (element, name) => Array.from(element.getElementsByTagNameNS("*", name));
+
+function hpElement(documentNode, reference, name) {
+  const namespace = reference.namespaceURI;
+  const prefix = reference.prefix || "hp";
+  return documentNode.createElementNS(namespace, `${prefix}:${name}`);
+}
+
+function replaceFirstLabel(elements, source, replacement) {
+  const textNode = elements.flatMap((element) => descendants(element, "t"))
+    .find((node) => (node.textContent || "").includes(source));
+  if (textNode) {
+    textNode.textContent = textNode.textContent.replace(source, replacement);
+    return true;
+  }
+  return false;
+}
+
+function cleanEndnoteParagraph(paragraph) {
+  descendants(paragraph, "secPr").forEach((node) => node.remove());
+  descendants(paragraph, "colPr").forEach((node) => node.remove());
+  descendants(paragraph, "linesegarray").forEach((node) => node.remove());
+  paragraph.setAttribute("pageBreak", "0");
+  paragraph.setAttribute("columnBreak", "0");
+}
+
+function addEndnoteNumber(documentNode, paragraph, number) {
+  let run = descendants(paragraph, "run")[0];
+  if (!run) {
+    run = hpElement(documentNode, paragraph, "run");
+    paragraph.insertBefore(run, paragraph.firstChild);
+  }
+  const control = hpElement(documentNode, paragraph, "ctrl");
+  const autoNumber = hpElement(documentNode, paragraph, "autoNum");
+  autoNumber.setAttribute("num", String(number));
+  autoNumber.setAttribute("numType", "ENDNOTE");
+  const format = hpElement(documentNode, paragraph, "autoNumFormat");
+  format.setAttribute("type", "DIGIT");
+  format.setAttribute("userChar", "");
+  format.setAttribute("prefixChar", "");
+  format.setAttribute("suffixChar", ")");
+  format.setAttribute("supscript", "0");
+  autoNumber.appendChild(format);
+  control.appendChild(autoNumber);
+  run.insertBefore(control, run.firstChild);
+}
+
+function instanceIdAllocator(documentNode) {
+  const used = new Set();
+  Array.from(documentNode.getElementsByTagName("*")).forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      if (attribute.name.toLowerCase() === "instid") used.add(attribute.value);
+    });
+  });
+  let candidate = 4_000_000_000;
+  return () => {
+    while (used.has(String(candidate))) candidate -= 1;
+    const value = String(candidate);
+    used.add(value);
+    candidate -= 1;
+    return value;
+  };
+}
+
+function attachEndnote(documentNode, children, descriptor, number, nextInstanceId) {
+  const problemElements = children.slice(descriptor.copyStart, descriptor.copyEnd);
+  const anchor = [...problemElements].reverse().find((element) => localName(element) === "p");
+  if (!anchor) throw new Error(`${descriptor.sourceCode}의 미주를 연결할 문제 문단이 없습니다.`);
+  let anchorRun = [...descendants(anchor, "run")].reverse()[0];
+  if (!anchorRun) {
+    anchorRun = hpElement(documentNode, anchor, "run");
+    anchor.appendChild(anchorRun);
+  }
+
+  const answer = children.slice(descriptor.answerStart, descriptor.answerEnd)
+    .filter((element) => localName(element) === "p")
+    .map((element) => element.cloneNode(true));
+  const explanation = children.slice(descriptor.explanationStart, descriptor.explanationEnd)
+    .filter((element) => localName(element) === "p")
+    .map((element) => element.cloneNode(true));
+  const passageExplanation = children
+    .slice(descriptor.passageExplanationStart, descriptor.passageExplanationEnd)
+    .filter((element) => localName(element) === "p")
+    .map((element) => element.cloneNode(true));
+  if (!answer.length) throw new Error(`${descriptor.sourceCode}의 [정답/모범답안] 문단이 없습니다.`);
+  if (!explanation.length) throw new Error(`${descriptor.sourceCode}의 [해설] 문단이 없습니다.`);
+  if (!replaceFirstLabel(answer, "[정답/모범답안]", "[정답]")) {
+    throw new Error(`${descriptor.sourceCode}의 정답 표식을 미주로 변환하지 못했습니다.`);
+  }
+  replaceFirstLabel(passageExplanation, "[해설]", "[지문 해설]");
+
+  const paragraphs = [...answer, ...explanation, ...passageExplanation];
+  paragraphs.forEach(cleanEndnoteParagraph);
+  addEndnoteNumber(documentNode, paragraphs[0], number);
+
+  const control = hpElement(documentNode, anchor, "ctrl");
+  const endnote = hpElement(documentNode, anchor, "endNote");
+  endnote.setAttribute("number", String(number));
+  endnote.setAttribute("suffixChar", "41");
+  endnote.setAttribute("instId", nextInstanceId());
+  const subList = hpElement(documentNode, anchor, "subList");
+  Object.entries({
+    id: "",
+    textDirection: "HORIZONTAL",
+    lineWrap: "BREAK",
+    vertAlign: "TOP",
+    linkListIDRef: "0",
+    linkListNextIDRef: "0",
+    textWidth: "0",
+    textHeight: "0",
+    hasTextRef: "0",
+    hasNumRef: "0",
+  }).forEach(([name, value]) => subList.setAttribute(name, value));
+  paragraphs.forEach((paragraph) => subList.appendChild(paragraph));
+  endnote.appendChild(subList);
+  control.appendChild(endnote);
+  anchorRun.appendChild(control);
+}
+
+function multipleChoiceAnswer(answerText) {
+  const digit = answerText.match(/^\s*([1-5])\s*$/)?.[1];
+  if (digit) return digit;
+  const symbol = answerText.match(/[①②③④⑤]/)?.[0];
+  return symbol ? String("①②③④⑤".indexOf(symbol) + 1) : null;
+}
+
+export async function prepareEbsiKoreanHwpx(file) {
   if (!file.name.toLowerCase().endsWith(".hwpx")) throw new Error(".hwpx 파일만 사용할 수 있습니다.");
   const data = await file.arrayBuffer();
   const zip = await JSZip.loadAsync(data, { checkCRC32: true });
@@ -175,6 +302,7 @@ export async function parseEbsiKoreanHwpx(file) {
 
   const questions = [];
   const analysisWarnings = [];
+  let endnoteNumber = 0;
   for (const sectionName of sectionNames) {
     const xml = await zip.file(sectionName).async("string");
     const documentNode = new DOMParser().parseFromString(xml, "application/xml");
@@ -184,9 +312,12 @@ export async function parseEbsiKoreanHwpx(file) {
     const texts = children.map((child) => plainText(child, { skipNotes: true, equationMode: "placeholder" }));
     const contentFlags = children.map((child) => hasRenderableElementContent(child, { skipNotes: true }));
     const structure = parseEbsiKoreanStructure(texts, sectionName, contentFlags);
+    const nextInstanceId = instanceIdAllocator(documentNode);
     analysisWarnings.push(...structure.warnings);
 
     structure.questions.forEach((descriptor) => {
+      endnoteNumber += 1;
+      attachEndnote(documentNode, children, descriptor, endnoteNumber, nextInstanceId);
       const ordinal = questions.length + 1;
       const questionText = textFromRange(texts, descriptor.copyStart, descriptor.copyEnd);
       const answerText = textFromRange(
@@ -203,7 +334,7 @@ export async function parseEbsiKoreanHwpx(file) {
       );
       const choiceMatches = questionText.match(/[①②③④⑤]/g) || [];
       const uniqueChoices = new Set(choiceMatches);
-      const numericAnswer = answerText.match(/^\s*([1-5])\s*$/)?.[1] || null;
+      const numericAnswer = multipleChoiceAnswer(answerText);
       questions.push({
         ordinal,
         sourceLabel: descriptor.sourceCode,
@@ -219,7 +350,8 @@ export async function parseEbsiKoreanHwpx(file) {
         blockEnd: descriptor.blockEnd,
         contentStart: descriptor.copyStart,
         contentEnd: descriptor.copyEnd,
-        copyMode: EBSI_KOREAN_COPY_MODE,
+        copyMode: "root-endnote-block",
+        preprocessMode: EBSI_KOREAN_PREPROCESS_MODE,
         copyStart: descriptor.copyStart,
         copyEnd: descriptor.copyEnd,
         passageGroupId: descriptor.passageGroupId,
@@ -232,7 +364,7 @@ export async function parseEbsiKoreanHwpx(file) {
         answerEnd: descriptor.answerEnd,
         explanationStart: descriptor.explanationStart,
         explanationEnd: descriptor.explanationEnd,
-        hasEndnote: false,
+        hasEndnote: true,
         answerType: uniqueChoices.size === 5 && numericAnswer ? "multiple_choice" : "short_answer",
         answer: numericAnswer || answerText,
         choiceCount: uniqueChoices.size || null,
@@ -255,7 +387,16 @@ export async function parseEbsiKoreanHwpx(file) {
         fullXml: "",
       });
     });
+    zip.file(sectionName, new XMLSerializer().serializeToString(documentNode));
   }
   if (!questions.length) throw new Error("EBSi 국어의 [지문]·[문제] 구조를 찾지 못했습니다.");
-  return { filename: file.name, questions, warnings: analysisWarnings };
+  const bytes = await zip.generateAsync({
+    type: "uint8array",
+    compression: "DEFLATE",
+    compressionOptions: { level: 3 },
+  });
+  return {
+    bytes,
+    analysis: { filename: file.name, questions, warnings: analysisWarnings },
+  };
 }

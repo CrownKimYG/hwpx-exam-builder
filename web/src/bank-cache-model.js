@@ -1,7 +1,7 @@
 import { normalizeKorean, projectFileIdentity } from "./bank-model.js";
 
 export const BANK_CACHE_SCHEMA_VERSION = 2;
-export const BANK_ANALYSIS_VERSION = 1;
+export const BANK_ANALYSIS_VERSION = 2;
 export const AUTO_BANK_RULE_ID = "auto";
 export const DEFAULT_BANK_RULE_ID = "macro-endnote-v1";
 export const EBSI_KOREAN_RULE_ID = "ebsi-korean-v1";
@@ -20,7 +20,7 @@ export const BANK_RULES = Object.freeze([
   Object.freeze({
     id: EBSI_KOREAN_RULE_ID,
     label: "EBSi 국어",
-    description: "공통 지문과 소속 문항·정답·해설을 분리해 묶습니다.",
+    description: "파일명으로 판별하고 정답·해설을 미주로 변환한 뒤 미주 기준으로 복사합니다.",
   }),
 ]);
 
@@ -39,6 +39,7 @@ const QUESTION_CACHE_FIELDS = Object.freeze([
   "contentStart",
   "contentEnd",
   "copyMode",
+  "preprocessMode",
   "copyStart",
   "copyEnd",
   "passageGroupId",
@@ -219,6 +220,9 @@ export function profileFileSettingKey(identity) {
 }
 
 export function detectBankRule(analysis) {
+  if (analysis?.questions?.length && analysis.questions.every((question) => question.preprocessMode === "ebsi-endnote-v1")) {
+    return EBSI_KOREAN_RULE_ID;
+  }
   if (analysis?.questions?.length && analysis.questions.every((question) => question.copyMode === "root-endnote-block")) {
     return DEFAULT_BANK_RULE_ID;
   }

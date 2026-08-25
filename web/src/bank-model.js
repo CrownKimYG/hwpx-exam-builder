@@ -1,4 +1,5 @@
 export const DIFFICULTIES = Object.freeze(["유제", "lv1", "lv2", "lv3"]);
+const EBSI_KOREAN_FILENAME_RE = /^\[(\d{5})\]_EBS\s+\d{4}(?:학년도)?\s+(.+?)_\((\d+)\)$/u;
 
 export function normalizeKorean(value) {
   return String(value || "").normalize("NFC").trim();
@@ -16,8 +17,8 @@ export function difficultyFromLabel(label) {
 export function parseBankFilename(filename) {
   const normalized = normalizeKorean(filename);
   const stem = normalized.replace(/\.(?:hwp|hwpx)$/i, "");
-  const ebsiKorean = stem.match(/^\[(\d{5})\]_EBS\s+\d{4}(?:학년도)?\s+(.+?)_\((\d+)\)$/u);
-  if (ebsiKorean) {
+  const ebsiKorean = stem.match(EBSI_KOREAN_FILENAME_RE);
+  if (ebsiKorean && /국어영역/u.test(ebsiKorean[2])) {
     return {
       subject: "국어",
       unitNumber: ebsiKorean[1],
@@ -49,6 +50,13 @@ export function parseBankFilename(filename) {
     declaredQuestionCount: match[5] ? Number(match[5]) : null,
     parsed: true,
   };
+}
+
+export function isEbsiKoreanBankFilename(filename) {
+  const normalized = normalizeKorean(filename);
+  const stem = normalized.replace(/\.(?:hwp|hwpx)$/i, "");
+  const match = stem.match(EBSI_KOREAN_FILENAME_RE);
+  return Boolean(match && /국어영역/u.test(match[2]));
 }
 
 export function unitKey(metadata) {
