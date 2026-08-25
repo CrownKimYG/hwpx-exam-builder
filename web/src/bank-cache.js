@@ -1,6 +1,7 @@
 import {
   DEFAULT_BANK_RULE_ID,
   fileAnalysisCacheKey,
+  migrateBankProfile,
 } from "./bank-cache-model.js";
 
 const DATABASE_NAME = "hwpx-exam-builder-bank-cache";
@@ -60,7 +61,9 @@ export async function listBankProfiles() {
   const done = transactionDone(transaction);
   const result = await requestResult(transaction.objectStore(PROFILE_STORE).getAll());
   await done;
-  return result.sort((left, right) => String(right.lastOpenedAt || "").localeCompare(String(left.lastOpenedAt || "")));
+  return result
+    .map(migrateBankProfile)
+    .sort((left, right) => String(right.lastOpenedAt || "").localeCompare(String(left.lastOpenedAt || "")));
 }
 
 export async function saveBankProfile(profile) {
@@ -145,6 +148,20 @@ export async function listCachedFileAnalyses(bankId) {
       "ko",
       { numeric: true, sensitivity: "base" },
     ));
+}
+
+export async function listCachedFileAnalysisRecords(bankId) {
+  const database = await openDatabase();
+  if (!database) return [];
+  const transaction = database.transaction(FILE_STORE, "readonly");
+  const done = transactionDone(transaction);
+  const result = await requestResult(transaction.objectStore(FILE_STORE).index("bankId").getAll(bankId));
+  await done;
+  return result.sort((left, right) => String(left.identity?.relativePath || "").localeCompare(
+    String(right.identity?.relativePath || ""),
+    "ko",
+    { numeric: true, sensitivity: "base" },
+  ));
 }
 
 export async function clearBankFileAnalyses(bankId) {

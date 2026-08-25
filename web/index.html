@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="국어·수학 문제은행으로 시험지를 만드는 시험지 제작실" />
-    <meta name="hwpx-exam-builder-version" content="multi-bank-v2" />
+    <meta name="hwpx-exam-builder-version" content="subject-handoff-v1" />
     <title>시험지 제작실</title>
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
@@ -13,11 +13,9 @@
       <header class="hero">
         <div class="hero-title">
           <h1><button class="app-home" id="app-home" type="button">시험지 제작실</button></h1>
-          <button class="bank-list-button" id="saved-banks" type="button">문제은행 목록</button>
           <span class="bank-title-separator hidden" id="bank-title-separator">&gt;</span>
           <div class="bank-profile-summary hidden" id="bank-profile-summary">
-            <span id="active-bank-name"></span>
-            <button class="text-link" id="rename-bank-profile" type="button">이름 변경</button>
+            <button id="active-bank-name" type="button" aria-label="문제은행 이름 변경"></button>
           </div>
         </div>
         <div class="hero-bank-tools" id="hero-bank-tools"></div>
@@ -29,11 +27,24 @@
           <div class="upload-actions" id="upload-actions">
             <label class="button folder-select-button" for="folder-input">폴더 선택</label>
             <label class="button" for="files-input">HWP/HWPX 파일 추가</label>
+            <label class="button" for="handoff-input">이어 만들기</label>
           </div>
           <input id="folder-input" type="file" accept=".hwp,.hwpx" webkitdirectory directory multiple />
           <input id="files-input" type="file" accept=".hwp,.hwpx,application/x-hwp,application/zip" multiple />
+          <input id="handoff-input" type="file" accept=".hwpx,.zip,application/zip" multiple />
         </div>
-        <p class="status" id="status" aria-live="polite">렌더러를 준비하는 중입니다...</p>
+        <p class="status" id="status" aria-live="polite"></p>
+      </section>
+
+      <section class="bank-home" id="bank-home" aria-labelledby="bank-home-title">
+        <h2 id="bank-home-title">문제은행 목록</h2>
+        <div class="bank-home-table-wrap">
+          <table class="bank-home-table">
+            <thead><tr><th>이름</th><th>처리 방식</th><th>파일</th><th>문항</th><th>단원</th><th>미분류</th><th></th></tr></thead>
+            <tbody id="bank-home-rows"></tbody>
+          </table>
+        </div>
+        <p class="saved-bank-empty hidden" id="bank-home-empty">저장된 문제은행이 없습니다.</p>
       </section>
 
       <section class="workspace hidden" id="workspace">
@@ -51,19 +62,9 @@
 
         <details class="bank-manager" id="bank-manager">
           <summary>문제은행 정보 수정</summary>
-          <div class="bank-bulk-actions hidden" id="bank-bulk-actions">
-            <span id="bank-selection-count"></span>
-            <select id="bulk-bank-rule" aria-label="선택 파일 처리 방식">
-              <option value="auto">자동</option>
-              <option value="macro-endnote-v1">미주 기준</option>
-              <option value="ebsi-korean-v1">EBSi 국어</option>
-            </select>
-            <button id="apply-bank-rule" type="button">적용·재분석</button>
-            <button class="text-link" id="clear-bank-selection" type="button">선택 해제</button>
-          </div>
           <div class="bank-table-wrap">
             <table class="bank-table">
-              <thead><tr><th><input id="select-all-bank-files" type="checkbox" aria-label="전체 파일 선택" /></th><th>코드</th><th>파일</th><th>처리 방식</th><th>과목</th><th>단원</th><th>난이도별 문항</th><th>상태</th><th></th></tr></thead>
+              <thead><tr><th>코드</th><th>파일</th><th>처리 방식</th><th>과목</th><th>단원</th><th>난이도별 문항</th><th>상태</th><th></th></tr></thead>
               <tbody id="bank-file-rows"></tbody>
             </table>
           </div>
@@ -134,25 +135,22 @@
     <dialog class="bank-dialog" id="bank-profile-dialog">
       <form id="bank-profile-form" method="dialog">
         <h2 id="bank-profile-dialog-title">문제은행 저장</h2>
+        <p class="dialog-summary" id="bank-profile-summary-text"></p>
         <label>문제은행 이름
           <input id="bank-profile-name" type="text" maxlength="80" required />
         </label>
+        <label>처리 방식
+          <select id="bank-profile-rule">
+            <option value="macro-endnote-v1">[수학]수특변형Z</option>
+            <option value="ebsi-korean-v1">[국어]EBS연계</option>
+          </select>
+        </label>
+        <p class="dialog-error" id="bank-profile-error" aria-live="polite"></p>
         <div class="dialog-actions">
           <button id="cancel-bank-profile" type="button">취소</button>
           <button class="primary" value="confirm" type="submit">저장</button>
         </div>
       </form>
-    </dialog>
-
-    <dialog class="bank-dialog saved-banks-dialog" id="saved-banks-dialog">
-      <div class="dialog-heading">
-        <div class="dialog-heading-title">
-          <button class="dialog-back hidden" id="saved-banks-back" type="button" aria-label="문제은행 목록으로 돌아가기">←</button>
-          <h2 id="saved-banks-title">문제은행 목록</h2>
-        </div>
-        <button id="close-saved-banks" type="button" aria-label="닫기">×</button>
-      </div>
-      <div class="saved-bank-list" id="saved-bank-list"></div>
     </dialog>
 
     <footer class="generation-bar hidden" id="generation-bar">
@@ -164,9 +162,9 @@
         </div>
         <label>출력 종류
           <select id="output-type">
-            <option value="problem">문제지 · 미주 숨김</option>
-            <option value="solution">해설지 · 원본 미주 표시</option>
-            <option value="both">문제지 + 해설지</option>
+            <option value="problem">문제지</option>
+            <option value="solution">문제지(해설 포함)</option>
+            <option value="both">문제지, 해설지 따로</option>
           </select>
         </label>
         <label>문항 형식
@@ -176,6 +174,9 @@
             <option value="essay">서술형</option>
           </select>
         </label>
+        <label class="check-control"><input id="show-subject-title" type="checkbox" />과목 제목</label>
+        <label class="button" for="handoff-input">인계 파일 불러오기</label>
+        <button id="save-handoff" type="button" disabled>인계용 HWPX 저장</button>
         <button class="primary generate" id="build-exams" type="button" disabled>생성·다운로드</button>
       </div>
       <details class="template-fields hidden" id="template-fields">
@@ -200,11 +201,7 @@
           status.append(link);
           return;
         }
-        window.setTimeout(() => {
-          if (status.dataset.rendererState) return;
-          status.className = "status error";
-          status.textContent = "렌더러 준비 시간이 초과되었습니다. 페이지를 새로고침해 주세요.";
-        }, 20000);
+        window.setTimeout(() => { if (!status.dataset.rendererState) status.dataset.rendererState = "slow"; }, 20000);
       })();
     </script>
     <script type="module" src="./src/main.js"></script>

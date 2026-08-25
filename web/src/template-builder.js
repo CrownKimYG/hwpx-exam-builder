@@ -467,7 +467,7 @@ function countNamed(elements, name) {
 function ensureLeftParagraphStyles(
   sourceHeaderDocument,
   elements,
-  { minimumLineSpacingPercent = null } = {},
+  { minimumLineSpacingPercent = null, removeHeadingElements = null } = {},
 ) {
   const paraProperties = findRefContainer(sourceHeaderDocument, "paraProperties");
   if (!paraProperties) return;
@@ -480,7 +480,9 @@ function ensureLeftParagraphStyles(
     if (localName(element) !== "p") return;
     const oldId = element.getAttribute("paraPrIDRef");
     if (!oldId) return;
-    if (!mapped.has(oldId)) {
+    const removeHeading = removeHeadingElements?.has(element) || false;
+    const mapKey = `${oldId}:${removeHeading ? "plain" : "heading"}`;
+    if (!mapped.has(mapKey)) {
       const sourceStyle = byId.get(oldId);
       if (!sourceStyle) return;
       const clone = sourceHeaderDocument.importNode(sourceStyle, true);
@@ -492,6 +494,13 @@ function ensureLeftParagraphStyles(
         clone.appendChild(align);
       }
       align.setAttribute("horizontal", "LEFT");
+      if (removeHeading) {
+        descendants(clone, "heading").forEach((heading) => {
+          heading.setAttribute("type", "NONE");
+          heading.setAttribute("idRef", "0");
+          heading.setAttribute("level", "0");
+        });
+      }
       if (minimumLineSpacingPercent) {
         descendants(clone, "lineSpacing").forEach((lineSpacing) => {
           lineSpacing.setAttribute("type", "PERCENT");
@@ -502,9 +511,9 @@ function ensureLeftParagraphStyles(
         });
       }
       paraProperties.appendChild(clone);
-      mapped.set(oldId, newId);
+      mapped.set(mapKey, newId);
     }
-    if (mapped.has(oldId)) element.setAttribute("paraPrIDRef", mapped.get(oldId));
+    if (mapped.has(mapKey)) element.setAttribute("paraPrIDRef", mapped.get(mapKey));
   });
   paraProperties.setAttribute("itemCnt", String(directChildrenByName(paraProperties, "paraPr").length));
 }
@@ -1391,10 +1400,85 @@ function remapCloneReferences(clones, context) {
   clones.forEach((clone) => remapReferences(clone, context.maps, context.fontMaps, context.binaryMap));
 }
 
-function prefixQuestionNumber(elements, outputIndex) {
+function owningParagraph(node) {
+  let owner = node;
+  while (owner && localName(owner) !== "p") owner = owner.parentElement;
+  return owner;
+}
+
+function hasDirectQuestionContent(run) {
+  if (descendants(run, "t").some((node) => (
+    paragraphOutsideEndnote(node) && isQuestionNumberCandidateText(node.textContent)
+  ))) return true;
+  return ["equation", "pic", "tbl"].some((name) => (
+    descendants(run, name).some(paragraphOutsideEndnote)
+  ));
+}
+
+function writeQuestionNumber(elements, outputIndex) {
+  const textNodes = elements.flatMap((element) => descendants(element, "t"))
+    .filter(paragraphOutsideEndnote);
+  const numbered = textNodes.find((node) => /^\s*\d{1,3}\s*[.)]\s*/u.test(node.textContent || ""));
+  if (numbered) {
+    numbered.textContent = String(numbered.textContent || "").replace(/^\s*\d{1,3}\s*[.)]\s*/u, `${outputIndex}. `);
+    return owningParagraph(numbered);
+  }
+
+  const paragraphs = elements.flatMap((element) => (
+    localName(element) === "p" ? [element, ...descendants(element, "p")] : descendants(element, "p")
+  ));
+  const paragraph = paragraphs.find((candidate) => (
+    Array.from(candidate.children || [])
+      .filter((child) => localName(child) === "run")
+      .some(hasDirectQuestionContent)
+  ));
+  if (!paragraph) return null;
+  const referenceRun = Array.from(paragraph.children || [])
+    .filter((child) => localName(child) === "run")
+    .find(hasDirectQuestionContent);
+  if (!referenceRun) return null;
+  const numberRun = paragraph.ownerDocument.importNode(referenceRun, false);
+  const text = paragraph.ownerDocument.createElementNS(
+    referenceRun.namespaceURI,
+    `${referenceRun.prefix || "hp"}:t`,
+  );
+  text.textContent = `${outputIndex}. `;
+  numberRun.appendChild(text);
+  paragraph.insertBefore(numberRun, referenceRun);
+  return paragraph;
+}
+
+export function isQuestionNumberCandidateText(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const compact = text.replace(/\s+/g, "").toLowerCase();
+  if (!text || /^(?:zb|zocbo(?:\.com)?)$/i.test(compact)) return false;
+  if (/족보닷컴|저작권법|무단으로배포|재판매/u.test(compact)) return false;
+  if (/^[|❙┃]?(?:예제|유제|기초|기본|실력)\d*(?:유사유형)?$/u.test(compact)) return false;
+  return true;
+}
+
+function rewritePassageRange(elements, start, end) {
+  const replacement = `[${start}~${end}]`;
+  const rangePattern = /\[\s*\d{1,3}\s*[~～]\s*\d{1,3}\s*\]/u;
   const textNode = elements.flatMap((element) => descendants(element, "t"))
-    .find((node) => String(node.textContent || "").trim());
-  if (textNode) textNode.textContent = `${outputIndex}. ${textNode.textContent || ""}`;
+    .find((node) => rangePattern.test(node.textContent || ""));
+  if (textNode) textNode.textContent = String(textNode.textContent || "").replace(rangePattern, replacement);
+}
+
+function groupKoreanPassageQuestions(questions) {
+  const emitted = new Set();
+  const result = [];
+  questions.forEach((question) => {
+    if (!isEbsiKoreanQuestion(question)) {
+      result.push(question);
+      return;
+    }
+    const key = passageGroupKey(question);
+    if (emitted.has(key)) return;
+    emitted.add(key);
+    result.push(...questions.filter((candidate) => passageGroupKey(candidate) === key));
+  });
+  return result;
 }
 
 function solutionParagraphs(question, targetDocument, context, outputIndex, transformMode) {
@@ -1480,10 +1564,14 @@ export async function buildExamFromSourcesHwpx(
     transformMode = "original",
     includeSolutions = false,
     useDefaultLayout = false,
+    questionNumberStart = 1,
+    forceFirstPageBreak = false,
+    subjectTitle = "",
   } = {},
 ) {
   if (!sources.length || !selectedQuestions.length) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
   if (!["original", "short", "essay"].includes(transformMode)) throw new Error("지원하지 않는 문항 변환 형식입니다.");
+  selectedQuestions = groupKoreanPassageQuestions(selectedQuestions);
   selectedQuestions.forEach(assertQuestionReady);
 
   const firstSource = sources.find((source) => source.id === selectedQuestions[0].fileCode) || sources[0];
@@ -1563,7 +1651,7 @@ export async function buildExamFromSourcesHwpx(
   if (useDefaultLayout) {
     if (!sequentialRecord) throw new Error("기본 템플릿의 연속 문제 삽입 지점을 찾지 못했습니다.");
     setParagraphColumns(sequentialRecord.element, 1, 0);
-    explanationRecords.forEach((record) => setParagraphColumns(record.element, 2, 1200));
+    explanationRecords.forEach((record) => setParagraphColumns(record.element, 1, 0));
   }
 
   const cloneQuestion = (
@@ -1613,10 +1701,16 @@ export async function buildExamFromSourcesHwpx(
     if (!clones.length || !hasQuestionContent(clones)) {
       throw new Error(`${question.code}의 정리된 문제 본문이 비어 있습니다.`);
     }
-    if (isEbsiKoreanQuestion(question)) prefixQuestionNumber(questionClones, outputIndex);
+    const numberedParagraph = writeQuestionNumber(questionClones, outputIndex);
     remapCloneReferences(clones, context);
     if (question.copyMode !== "root-endnote-block") {
-      ensureLeftParagraphStyles(outputHeader, clones);
+      ensureLeftParagraphStyles(outputHeader, clones, {
+        removeHeadingElements: numberedParagraph ? new Set([numberedParagraph]) : null,
+      });
+    } else if (numberedParagraph) {
+      ensureLeftParagraphStyles(outputHeader, [numberedParagraph], {
+        removeHeadingElements: new Set([numberedParagraph]),
+      });
     }
     return clones;
   };
@@ -1625,15 +1719,30 @@ export async function buildExamFromSourcesHwpx(
     clearSlotMarker(sequentialRecord.element);
     const parent = sequentialRecord.element.parentNode;
     const insertionPoint = sequentialRecord.element.nextSibling;
+    if (subjectTitle) {
+      const heading = cleanTextParagraph(sequentialRecord.documentNode, sequentialRecord.element, subjectTitle, {
+        pageBreak: forceFirstPageBreak,
+      });
+      descendants(heading, "run").forEach((run) => run.setAttribute("charPrIDRef", "0"));
+      parent.insertBefore(heading, insertionPoint);
+    }
     let previousPassageKey = null;
     selectedQuestions.forEach((question, index) => {
       const currentPassageKey = passageGroupKey(question);
       const startsGroup = currentPassageKey !== previousPassageKey;
+      const outputIndex = questionNumberStart + index;
+      const groupSize = selectedQuestions.filter((candidate) => passageGroupKey(candidate) === currentPassageKey).length;
       const clones = cloneQuestion(question, sequentialRecord.documentNode, {
         includePassage: startsGroup,
-        outputIndex: index + 1,
+        outputIndex,
       });
-      if (useDefaultLayout) setQuestionPageBreak(clones, index > 0 && startsGroup);
+      if (startsGroup && isEbsiKoreanQuestion(question)) {
+        rewritePassageRange(clones, outputIndex, outputIndex + groupSize - 1);
+      }
+      if (useDefaultLayout || forceFirstPageBreak) {
+        const firstGroupBreak = index === 0 && forceFirstPageBreak && !subjectTitle;
+        setQuestionPageBreak(clones, firstGroupBreak || (index > 0 && startsGroup));
+      }
       clones.forEach((clone) => parent.insertBefore(clone, insertionPoint));
       previousPassageKey = currentPassageKey;
     });
@@ -1649,7 +1758,7 @@ export async function buildExamFromSourcesHwpx(
       const currentPassageKey = passageGroupKey(question);
       cloneQuestion(question, slot.documentNode, {
         includePassage: currentPassageKey !== previousPassageKey,
-        outputIndex: index + 1,
+        outputIndex: questionNumberStart + index,
       }).forEach((clone) => parent.insertBefore(clone, slot.element));
       parent.removeChild(slot.element);
       previousPassageKey = currentPassageKey;

@@ -1,6 +1,10 @@
-import { normalizeKorean, projectFileIdentity } from "./bank-model.js";
+import {
+  isEbsiKoreanBankFilename,
+  normalizeKorean,
+  projectFileIdentity,
+} from "./bank-model.js";
 
-export const BANK_CACHE_SCHEMA_VERSION = 2;
+export const BANK_CACHE_SCHEMA_VERSION = 3;
 export const BANK_ANALYSIS_VERSION = 2;
 export const AUTO_BANK_RULE_ID = "auto";
 export const DEFAULT_BANK_RULE_ID = "macro-endnote-v1";
@@ -14,15 +18,52 @@ export const BANK_RULES = Object.freeze([
   }),
   Object.freeze({
     id: DEFAULT_BANK_RULE_ID,
-    label: "미주 기준",
+    label: "[수학]수특변형Z",
     description: "문제와 [정답]·[해설] 미주를 한 블록으로 복사합니다.",
   }),
   Object.freeze({
     id: EBSI_KOREAN_RULE_ID,
-    label: "EBSi 국어",
+    label: "[국어]EBS연계",
     description: "파일명으로 판별하고 정답·해설을 미주로 변환한 뒤 미주 기준으로 복사합니다.",
   }),
 ]);
+
+export const CONCRETE_BANK_RULES = Object.freeze(
+  BANK_RULES.filter((rule) => rule.id !== AUTO_BANK_RULE_ID),
+);
+
+export function bankSubjectForRule(ruleId) {
+  if (ruleId === EBSI_KOREAN_RULE_ID) return "국어";
+  if (ruleId === DEFAULT_BANK_RULE_ID) return "수학";
+  return "";
+}
+
+export function detectBankRuleFromFilenames(files) {
+  const detected = new Set([...files].map((file) => (
+    isEbsiKoreanBankFilename(file.name) ? EBSI_KOREAN_RULE_ID : DEFAULT_BANK_RULE_ID
+  )));
+  if (detected.size > 1) {
+    throw new Error("처리 방식이 다른 파일은 한 문제은행에 함께 넣을 수 없습니다.");
+  }
+  return [...detected][0] || DEFAULT_BANK_RULE_ID;
+}
+
+function sourceStem(file) {
+  const path = normalizeKorean(file.webkitRelativePath || file._relativePath || file.name);
+  return path.replace(/\.(?:hwp|hwpx)$/i, "").toLocaleLowerCase("ko");
+}
+
+export function preferHwpxDuplicates(files) {
+  const selected = new Map();
+  [...files].forEach((file) => {
+    const key = sourceStem(file);
+    const current = selected.get(key);
+    if (!current || (/\.hwpx$/i.test(file.name) && !/\.hwpx$/i.test(current.name))) {
+      selected.set(key, file);
+    }
+  });
+  return [...selected.values()];
+}
 
 const QUESTION_CACHE_FIELDS = Object.freeze([
   "ordinal",
@@ -43,6 +84,7 @@ const QUESTION_CACHE_FIELDS = Object.freeze([
   "copyStart",
   "copyEnd",
   "passageGroupId",
+  "lectureNumber",
   "passageRangeLabel",
   "passageStart",
   "passageEnd",
@@ -91,7 +133,11 @@ export function describeBankFolder(files) {
     const parts = relativePathOf(file).split("/").filter(Boolean);
     return parts.length > 1 ? parts[0] : "";
   }).filter(Boolean));
-  const rootFolderName = roots.size === 1 ? [...roots][0] : "문제은행";
+  const rootFolderName = roots.size === 1
+    ? [...roots][0]
+    : selected.length === 1
+      ? normalizeKorean(selected[0].name).replace(/\.(?:hwp|hwpx)$/i, "")
+      : "문제은행";
   return {
     rootFolderName,
     manifest: identities,
@@ -107,10 +153,10 @@ export function sameFolderManifest(left = [], right = []) {
 
 export function folderMatchScore(profile, descriptor) {
   if (!profile || !descriptor) return 0;
-  if (normalizeKorean(profile.rootFolderName) !== normalizeKorean(descriptor.rootFolderName)) return 0;
   const previous = profile.manifest || [];
   const current = descriptor.manifest || [];
   if (sameFolderManifest(previous, current)) return 1;
+  if (normalizeKorean(profile.rootFolderName) !== normalizeKorean(descriptor.rootFolderName)) return 0;
   const denominator = Math.max(previous.length, current.length, 1);
   const previousPaths = new Set(previous.map(pathKey));
   const previousIdentities = new Set(previous.map(manifestIdentityKey));
@@ -132,31 +178,33 @@ export function findMatchingBankProfile(profiles, descriptor) {
   };
 }
 
-function initialFileSettings(manifest, existing = {}, legacyRuleId = null) {
+function initialFileSettings(manifest, existing = {}, bankRuleId = DEFAULT_BANK_RULE_ID) {
   const result = structuredClone(existing || {});
   manifest.forEach((identity) => {
     const key = profileFileSettingKey(identity);
     const saved = result[key] || {};
-    const selectedRuleId = saved.selectedRuleId || legacyRuleId || AUTO_BANK_RULE_ID;
     result[key] = {
       ...saved,
-      selectedRuleId,
-      resolvedRuleId: saved.resolvedRuleId || (selectedRuleId === AUTO_BANK_RULE_ID ? null : selectedRuleId),
+      selectedRuleId: bankRuleId,
+      resolvedRuleId: bankRuleId,
     };
   });
   return result;
 }
 
-export function createBankProfile({ displayName, descriptor, bankId } = {}) {
+export function createBankProfile({ displayName, descriptor, bankId, ruleId = DEFAULT_BANK_RULE_ID } = {}) {
   if (!descriptor) throw new Error("문제은행 폴더 정보가 없습니다.");
+  if (!CONCRETE_BANK_RULES.some((rule) => rule.id === ruleId)) throw new Error("문제은행 처리 방식이 올바르지 않습니다.");
   const now = new Date().toISOString();
   return {
     schemaVersion: BANK_CACHE_SCHEMA_VERSION,
     bankId: bankId || globalThis.crypto?.randomUUID?.() || `bank-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     displayName: normalizeKorean(displayName) || descriptor.rootFolderName,
+    ruleId,
+    subject: bankSubjectForRule(ruleId),
     rootFolderName: descriptor.rootFolderName,
     manifest: descriptor.manifest,
-    fileSettings: initialFileSettings(descriptor.manifest),
+    fileSettings: initialFileSettings(descriptor.manifest, {}, ruleId),
     createdAt: now,
     updatedAt: now,
     lastOpenedAt: now,
@@ -165,15 +213,36 @@ export function createBankProfile({ displayName, descriptor, bankId } = {}) {
 
 export function updateBankProfileForFolder(profile, descriptor) {
   const now = new Date().toISOString();
-  const { ruleId: legacyRuleId = null, ...profileWithoutFolderRule } = profile;
+  const migrated = migrateBankProfile(profile);
   return {
-    ...profileWithoutFolderRule,
+    ...migrated,
     schemaVersion: BANK_CACHE_SCHEMA_VERSION,
     rootFolderName: descriptor.rootFolderName,
     manifest: descriptor.manifest,
-    fileSettings: initialFileSettings(descriptor.manifest, profile.fileSettings, legacyRuleId),
+    fileSettings: initialFileSettings(descriptor.manifest, migrated.fileSettings, migrated.ruleId),
     updatedAt: now,
     lastOpenedAt: now,
+  };
+}
+
+export function inferProfileRuleId(profile) {
+  if (CONCRETE_BANK_RULES.some((rule) => rule.id === profile?.ruleId)) return profile.ruleId;
+  const savedRules = Object.values(profile?.fileSettings || {})
+    .map((setting) => setting.resolvedRuleId || setting.selectedRuleId)
+    .filter((ruleId) => CONCRETE_BANK_RULES.some((rule) => rule.id === ruleId));
+  if (savedRules.includes(EBSI_KOREAN_RULE_ID)) return EBSI_KOREAN_RULE_ID;
+  return DEFAULT_BANK_RULE_ID;
+}
+
+export function migrateBankProfile(profile) {
+  if (!profile) return profile;
+  const ruleId = inferProfileRuleId(profile);
+  return {
+    ...structuredClone(profile),
+    schemaVersion: BANK_CACHE_SCHEMA_VERSION,
+    ruleId,
+    subject: bankSubjectForRule(ruleId),
+    fileSettings: initialFileSettings(profile.manifest || [], profile.fileSettings, ruleId),
   };
 }
 

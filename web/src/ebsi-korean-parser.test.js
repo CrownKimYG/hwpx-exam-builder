@@ -38,6 +38,7 @@ test("EBSi 국어 지문과 소속 문항의 복사 범위를 분리한다", () 
   assert.deepEqual([parsed.questions[0].answerStart, parsed.questions[0].answerEnd], [11, 13]);
   assert.deepEqual([parsed.questions[1].copyStart, parsed.questions[1].copyEnd], [17, 18]);
   assert.equal(parsed.questions[0].passageGroupId, parsed.questions[1].passageGroupId);
+  assert.equal(parsed.questions[0].lectureNumber, 1);
   assert.equal(parsed.questions[1].sourceCode, "26001-0002");
 });
 

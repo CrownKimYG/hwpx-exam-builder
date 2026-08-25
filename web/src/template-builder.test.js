@@ -4,6 +4,7 @@ import {
   answerChoiceSymbolFromText,
   choiceSymbolFromShapeComment,
   hasCompleteChoiceSet,
+  isQuestionNumberCandidateText,
   rewriteEssayPromptText,
 } from "./template-builder.js";
 
@@ -30,4 +31,11 @@ test("서술형 문장 말미는 지정된 세 규칙으로만 치환한다", ()
   assert.equal(rewriteEssayPromptText("도형의 넓이는？"), "도형의 넓이를 구하는 과정을 서술하시오.");
   assert.equal(rewriteEssayPromptText("상수 a를 구하시오"), "상수 a를 구하는 과정을 서술하시오.");
   assert.equal(rewriteEssayPromptText("옳은 것을 고르시오."), "옳은 것을 고르시오.");
+});
+
+test("문항 번호는 워터마크나 난이도 표식이 아닌 본문에 붙인다", () => {
+  assert.equal(isQuestionNumberCandidateText("zb"), false);
+  assert.equal(isQuestionNumberCandidateText("zocbo.com"), false);
+  assert.equal(isQuestionNumberCandidateText("❙ 예제1 유사유형"), false);
+  assert.equal(isQuestionNumberCandidateText("다음 식의 값을 구하시오."), true);
 });

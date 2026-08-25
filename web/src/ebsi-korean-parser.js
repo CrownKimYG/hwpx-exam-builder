@@ -8,6 +8,19 @@ const PASSAGE_MARKER_RE = /^\[(\d{1,3})[~～](\d{1,3})\]\[지문\]$/;
 const PASSAGE_METADATA_RE = /#번\d{1,3}[~～]\d{1,3}#문항코드$/;
 const QUESTION_METADATA_RE = /#번(\d{1,3})#문항코드([A-Za-z0-9]+-\d+)/;
 
+function lectureNumberAt(texts, index) {
+  for (let cursor = index; cursor >= Math.max(0, index - 12); cursor -= 1) {
+    const value = compact(texts[cursor]);
+    const inline = value.match(/#강(\d{1,3})/u);
+    if (inline) return Number(inline[1]);
+    if (value === "#강") {
+      const next = compact(texts[cursor + 1]).match(/^(\d{1,3})$/u);
+      if (next) return Number(next[1]);
+    }
+  }
+  return null;
+}
+
 function compact(value) {
   return String(value || "").replace(/\s+/g, "").trim();
 }
@@ -54,6 +67,7 @@ export function parseEbsiKoreanStructure(
     rangeEnd: Number(marker.match[2]),
     rangeLabel: normalized[marker.index],
     passageGroupId: `${sectionName}:${marker.index}`,
+    lectureNumber: lectureNumberAt(normalized, marker.index),
   }));
   groups.forEach((group, index) => {
     group.blockEnd = groups[index + 1]?.blockStart ?? normalized.length;
@@ -130,6 +144,7 @@ export function parseEbsiKoreanStructure(
       questions.push({
         sectionName,
         passageGroupId: group.passageGroupId,
+        lectureNumber: group.lectureNumber,
         passageRangeLabel: group.rangeLabel,
         passageStart: passage.start,
         passageEnd: passage.end,
@@ -209,6 +224,22 @@ function addEndnoteNumber(documentNode, paragraph, number) {
   run.insertBefore(control, run.firstChild);
 }
 
+function placeholderParagraph(documentNode, prototype, value) {
+  const paragraph = documentNode.importNode(prototype, false);
+  paragraph.setAttribute("pageBreak", "0");
+  paragraph.setAttribute("columnBreak", "0");
+  const run = hpElement(documentNode, paragraph, "run");
+  const prototypeRun = descendants(prototype, "run")[0];
+  if (prototypeRun?.getAttribute("charPrIDRef")) {
+    run.setAttribute("charPrIDRef", prototypeRun.getAttribute("charPrIDRef"));
+  }
+  const text = hpElement(documentNode, paragraph, "t");
+  text.textContent = value;
+  run.appendChild(text);
+  paragraph.appendChild(run);
+  return paragraph;
+}
+
 function instanceIdAllocator(documentNode) {
   const used = new Set();
   Array.from(documentNode.getElementsByTagName("*")).forEach((element) => {
@@ -236,20 +267,23 @@ function attachEndnote(documentNode, children, descriptor, number, nextInstanceI
     anchor.appendChild(anchorRun);
   }
 
-  const answer = children.slice(descriptor.answerStart, descriptor.answerEnd)
+  let answer = children.slice(descriptor.answerStart, descriptor.answerEnd)
     .filter((element) => localName(element) === "p")
     .map((element) => element.cloneNode(true));
-  const explanation = children.slice(descriptor.explanationStart, descriptor.explanationEnd)
+  let explanation = children.slice(descriptor.explanationStart, descriptor.explanationEnd)
     .filter((element) => localName(element) === "p")
     .map((element) => element.cloneNode(true));
   const passageExplanation = children
     .slice(descriptor.passageExplanationStart, descriptor.passageExplanationEnd)
     .filter((element) => localName(element) === "p")
     .map((element) => element.cloneNode(true));
-  if (!answer.length) throw new Error(`${descriptor.sourceCode}의 [정답/모범답안] 문단이 없습니다.`);
-  if (!explanation.length) throw new Error(`${descriptor.sourceCode}의 [해설] 문단이 없습니다.`);
-  if (!replaceFirstLabel(answer, "[정답/모범답안]", "[정답]")) {
-    throw new Error(`${descriptor.sourceCode}의 정답 표식을 미주로 변환하지 못했습니다.`);
+  if (!answer.length) answer = [placeholderParagraph(documentNode, anchor, "[정답] 정답 누락")];
+  if (!explanation.length) explanation = [placeholderParagraph(documentNode, anchor, "[해설] 해설 누락")];
+  if (!replaceFirstLabel(answer, "[정답/모범답안]", "[정답]") && !replaceFirstLabel(answer, "[정답]", "[정답]")) {
+    answer.unshift(placeholderParagraph(documentNode, anchor, "[정답] 정답 누락"));
+  }
+  if (!explanation.some((paragraph) => descendants(paragraph, "t").some((node) => (node.textContent || "").includes("[해설]")))) {
+    explanation.unshift(placeholderParagraph(documentNode, anchor, "[해설] 해설 누락"));
   }
   replaceFirstLabel(passageExplanation, "[해설]", "[지문 해설]");
 
@@ -355,6 +389,7 @@ export async function prepareEbsiKoreanHwpx(file) {
         copyStart: descriptor.copyStart,
         copyEnd: descriptor.copyEnd,
         passageGroupId: descriptor.passageGroupId,
+        lectureNumber: descriptor.lectureNumber,
         passageRangeLabel: descriptor.passageRangeLabel,
         passageStart: descriptor.passageStart,
         passageEnd: descriptor.passageEnd,
