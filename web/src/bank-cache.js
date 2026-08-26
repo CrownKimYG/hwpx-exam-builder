@@ -157,11 +157,12 @@ export async function listCachedFileAnalysisRecords(bankId) {
   const done = transactionDone(transaction);
   const result = await requestResult(transaction.objectStore(FILE_STORE).index("bankId").getAll(bankId));
   await done;
-  return result.sort((left, right) => String(left.identity?.relativePath || "").localeCompare(
-    String(right.identity?.relativePath || ""),
-    "ko",
-    { numeric: true, sensitivity: "base" },
-  ));
+  return result.filter((record) => record.cacheKey === fileAnalysisCacheKey(record.bankId, record.identity, record.ruleId))
+    .sort((left, right) => String(left.identity?.relativePath || "").localeCompare(
+      String(right.identity?.relativePath || ""),
+      "ko",
+      { numeric: true, sensitivity: "base" },
+    ));
 }
 
 export async function clearBankFileAnalyses(bankId) {

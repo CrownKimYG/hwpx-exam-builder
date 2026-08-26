@@ -121,7 +121,7 @@ export function convertedHwpxName(filename) {
 }
 
 export function bankPreviewBytes(record) {
-  return record?.bytes || null;
+  return record?.previewBytes || record?.bytes || null;
 }
 
 export function detectBankFormat(bytes) {

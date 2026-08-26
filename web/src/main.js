@@ -4,6 +4,7 @@ import JSZip from "jszip";
 import "./styles.css";
 import { parseHwpx, prepareHwpxForPreview, sanitizeHwpxWatermarks } from "./parser.js";
 import { EBSI_KOREAN_PREPROCESS_MODE, prepareEbsiKoreanHwpx } from "./ebsi-korean-parser.js";
+import { prepareSuteukShortEssayHwpx } from "./suteuk-short-essay-parser.js";
 import {
   bankPreviewBytes,
   isLegacyHwpFile,
@@ -20,7 +21,6 @@ import {
 } from "./template-builder.js";
 import {
   DIFFICULTIES,
-  isEbsiKoreanBankFilename,
   parseBankFilename,
   parseQuestionCodes,
   projectFileIdentity,
@@ -37,8 +37,11 @@ import {
 import {
   AUTO_BANK_RULE_ID,
   BANK_RULES,
+  CONCRETE_BANK_RULES,
   DEFAULT_BANK_RULE_ID,
   EBSI_KOREAN_RULE_ID,
+  SUTEUK_SHORT_ESSAY_RULE_ID,
+  bankRuleRequiresPreprocessing,
   bankSubjectForRule,
   createBankProfile,
   detectBankRule,
@@ -203,12 +206,12 @@ function renderBankProfileSummary() {
   elements.bankTitleSeparator.classList.toggle("hidden", !hasFiles);
   elements.bankProfileSummary.classList.toggle("hidden", !hasFiles);
   elements.activeBankName.textContent = profile?.displayName || (hasFiles ? "추가한 파일" : "");
-  const korean = profile?.ruleId === EBSI_KOREAN_RULE_ID;
-  if (korean) {
+  const originalOnly = [EBSI_KOREAN_RULE_ID, SUTEUK_SHORT_ESSAY_RULE_ID].includes(profile?.ruleId);
+  if (originalOnly) {
     elements.questionFormat.value = "original";
     state.settings.questionFormat = "original";
   }
-  elements.questionFormat.disabled = korean;
+  elements.questionFormat.disabled = originalOnly;
 }
 
 function setBankControlsCompact(compact) {
@@ -785,21 +788,20 @@ async function analyzeBankFileByRule(file, ruleId) {
     return { analysis: await parseHwpx(file), bytes: null };
   }
   if (ruleId === EBSI_KOREAN_RULE_ID) return prepareEbsiKoreanHwpx(file);
+  if (ruleId === SUTEUK_SHORT_ESSAY_RULE_ID) return prepareSuteukShortEssayHwpx(file);
   throw new Error(`${ruleLabel(ruleId)} 처리 방식은 아직 사용할 수 없습니다.`);
 }
 
 async function processBankRecord(record, { force = false } = {}) {
   const isHwp = isLegacyHwpFile(record.file);
-  const filenameRuleId = isEbsiKoreanBankFilename(record.file.name)
-    ? EBSI_KOREAN_RULE_ID
-    : null;
-  const analysisRuleId = record.selectedRuleId === AUTO_BANK_RULE_ID && filenameRuleId
-    ? filenameRuleId
+  const analysisRuleId = record.selectedRuleId === AUTO_BANK_RULE_ID
+    ? detectBankRuleFromFilenames([record.file])
     : record.ruleId;
   record.ruleId = analysisRuleId;
   record.cacheHit = false;
   record.cacheNeedsWrite = false;
   record.preprocessedFromEbsi = false;
+  record.previewBytes = null;
   let cached = null;
   if (record.bankId && !force) {
     try {
@@ -837,7 +839,9 @@ async function processBankRecord(record, { force = false } = {}) {
   record.bytes = normalized.bytes;
   record.sourceBytes = normalized.sourceBytes;
   record.convertedFromHwp = normalized.convertedFromHwp;
-  if (cachedAnalysis && analysisRuleId !== EBSI_KOREAN_RULE_ID) {
+  if (analysisRuleId === SUTEUK_SHORT_ESSAY_RULE_ID) record.previewBytes = normalized.bytes;
+  // 복사 범위는 전처리한 문서에 속한다. 재연결 시에도 같은 전처리를 실행한다.
+  if (cachedAnalysis && !bankRuleRequiresPreprocessing(analysisRuleId)) {
     record.analysis = cachedAnalysis;
     record.cacheHit = true;
     record.cacheNeedsWrite = false;
@@ -859,7 +863,7 @@ function finishProcessedRecord(record) {
     : record.selectedRuleId;
   record.ruleId = record.resolvedRuleId || DEFAULT_BANK_RULE_ID;
   record.error = null;
-  const issues = [];
+  const issues = [...(record.analysis?.warnings || [])];
   const questionCount = record.analysis?.questions?.length || 0;
   if (!questionCount) issues.push("문항을 찾지 못했습니다.");
   if (record.selectedRuleId === AUTO_BANK_RULE_ID && !detectedRuleId) {
@@ -917,6 +921,7 @@ async function reanalyzeBankRecords(records, selectedRuleId) {
         analysis: record.analysis,
         bytes: record.bytes,
         sourceBytes: record.sourceBytes,
+        previewBytes: record.previewBytes,
         convertedFromHwp: record.convertedFromHwp,
         preprocessedFromEbsi: record.preprocessedFromEbsi,
         cacheHit: record.cacheHit,
@@ -1606,6 +1611,7 @@ async function verifyExamVariant(bytes, {
     expectedQuestionPageBreakCount: null,
     expectedSolutionColumnCount: null,
     expectHiddenEndnotes: variant === "problem",
+    expectHiddenEndnoteMarkers: state.bankProfile?.ruleId !== SUTEUK_SHORT_ESSAY_RULE_ID,
     preserveOriginalContent: true,
   });
   await rhwpReady;
@@ -1865,6 +1871,9 @@ function bindEvents() {
   elements.cancelBuild.addEventListener("click", cancelActiveBuild);
 }
 
+elements.bankProfileRule.replaceChildren(...CONCRETE_BANK_RULES.map((rule) => (
+  createElement("option", { text: rule.label, attributes: { value: rule.id } })
+)));
 elements.quickSeed.value = state.quick.seed;
 elements.outputType.value = state.settings.outputType;
 elements.questionFormat.value = state.settings.questionFormat;

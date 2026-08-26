@@ -28,6 +28,12 @@ test("HWP 미리보기는 이미지가 보정된 변환 HWPX 바이트를 사용
   }), convertedBytes);
 });
 
+test("수능특강 원본 미리보기와 생성용 전처리 바이트를 구분한다", () => {
+  const previewBytes = new Uint8Array([1, 2]);
+  const bytes = new Uint8Array([3, 4]);
+  assert.equal(bankPreviewBytes({ previewBytes, bytes }), previewBytes);
+});
+
 test("HWP와 HWPX 문제은행 파일만 선택한다", () => {
   assert.equal(isSupportedBankFile({ name: "bank.hwp" }), true);
   assert.equal(isSupportedBankFile({ name: "bank.HWPX" }), true);

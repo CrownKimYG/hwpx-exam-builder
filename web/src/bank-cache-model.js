@@ -1,5 +1,6 @@
 import {
   isEbsiKoreanBankFilename,
+  isSuteukShortEssayBankFilename,
   normalizeKorean,
   projectFileIdentity,
 } from "./bank-model.js";
@@ -9,6 +10,8 @@ export const BANK_ANALYSIS_VERSION = 2;
 export const AUTO_BANK_RULE_ID = "auto";
 export const DEFAULT_BANK_RULE_ID = "macro-endnote-v1";
 export const EBSI_KOREAN_RULE_ID = "ebsi-korean-v1";
+export const SUTEUK_SHORT_ESSAY_RULE_ID = "suteuk-short-essay-v1";
+export const SUTEUK_SHORT_ESSAY_ANALYSIS_VERSION = 1;
 
 export const BANK_RULES = Object.freeze([
   Object.freeze({
@@ -20,6 +23,11 @@ export const BANK_RULES = Object.freeze([
     id: DEFAULT_BANK_RULE_ID,
     label: "[수학]수특변형Z",
     description: "문제와 [정답]·[해설] 미주를 한 블록으로 복사합니다.",
+  }),
+  Object.freeze({
+    id: SUTEUK_SHORT_ESSAY_RULE_ID,
+    label: "[수학] 수능특강",
+    description: "약술법·연습문제·기본·실력·심화를 구분하고 문제와 원본 미주를 복사합니다.",
   }),
   Object.freeze({
     id: EBSI_KOREAN_RULE_ID,
@@ -34,13 +42,14 @@ export const CONCRETE_BANK_RULES = Object.freeze(
 
 export function bankSubjectForRule(ruleId) {
   if (ruleId === EBSI_KOREAN_RULE_ID) return "국어";
-  if (ruleId === DEFAULT_BANK_RULE_ID) return "수학";
+  if ([DEFAULT_BANK_RULE_ID, SUTEUK_SHORT_ESSAY_RULE_ID].includes(ruleId)) return "수학";
   return "";
 }
 
 export function detectBankRuleFromFilenames(files) {
   const detected = new Set([...files].map((file) => (
-    isEbsiKoreanBankFilename(file.name) ? EBSI_KOREAN_RULE_ID : DEFAULT_BANK_RULE_ID
+    isEbsiKoreanBankFilename(file.name) ? EBSI_KOREAN_RULE_ID
+      : isSuteukShortEssayBankFilename(file.name) ? SUTEUK_SHORT_ESSAY_RULE_ID : DEFAULT_BANK_RULE_ID
   )));
   if (detected.size > 1) {
     throw new Error("처리 방식이 다른 파일은 한 문제은행에 함께 넣을 수 없습니다.");
@@ -70,6 +79,9 @@ const QUESTION_CACHE_FIELDS = Object.freeze([
   "sourceLabel",
   "sourceType",
   "sourceNumber",
+  "subtopic",
+  "subtopicSource",
+  "sourceCodes",
   "difficultyLabel",
   "difficulty",
   "sectionName",
@@ -231,6 +243,7 @@ export function inferProfileRuleId(profile) {
     .map((setting) => setting.resolvedRuleId || setting.selectedRuleId)
     .filter((ruleId) => CONCRETE_BANK_RULES.some((rule) => rule.id === ruleId));
   if (savedRules.includes(EBSI_KOREAN_RULE_ID)) return EBSI_KOREAN_RULE_ID;
+  if (savedRules.includes(SUTEUK_SHORT_ESSAY_RULE_ID)) return SUTEUK_SHORT_ESSAY_RULE_ID;
   return DEFAULT_BANK_RULE_ID;
 }
 
@@ -250,7 +263,7 @@ export function fileAnalysisCacheKey(bankId, identity, ruleId = DEFAULT_BANK_RUL
   return [
     bankId,
     ruleId,
-    BANK_ANALYSIS_VERSION,
+    ruleId === SUTEUK_SHORT_ESSAY_RULE_ID ? SUTEUK_SHORT_ESSAY_ANALYSIS_VERSION : BANK_ANALYSIS_VERSION,
     identity.relativePath,
     identity.size,
     identity.lastModified,
@@ -262,6 +275,9 @@ export function serializeBankAnalysis(analysis) {
   if (!analysis?.questions?.length || !analysis.questions.every((question) => supportedModes.has(question.copyMode))) return null;
   return {
     filename: analysis.filename,
+    ruleId: analysis.ruleId || null,
+    preprocessMode: analysis.preprocessMode || null,
+    warnings: structuredClone(analysis.warnings || []),
     questions: analysis.questions.map((question) => Object.fromEntries(
       QUESTION_CACHE_FIELDS
         .filter((field) => Object.hasOwn(question, field))
@@ -274,6 +290,9 @@ export function hydrateBankAnalysis(cached) {
   if (!cached?.questions) return null;
   return {
     filename: cached.filename,
+    ruleId: cached.ruleId || null,
+    preprocessMode: cached.preprocessMode || null,
+    warnings: structuredClone(cached.warnings || []),
     questions: cached.questions.map((question) => ({
       ...structuredClone(question),
       questionElements: [],
@@ -289,14 +308,21 @@ export function profileFileSettingKey(identity) {
 }
 
 export function detectBankRule(analysis) {
+  if (analysis?.questions?.length && analysis.questions.every((question) => question.preprocessMode === SUTEUK_SHORT_ESSAY_RULE_ID)) {
+    return SUTEUK_SHORT_ESSAY_RULE_ID;
+  }
   if (analysis?.questions?.length && analysis.questions.every((question) => question.preprocessMode === "ebsi-endnote-v1")) {
     return EBSI_KOREAN_RULE_ID;
   }
-  if (analysis?.questions?.length && analysis.questions.every((question) => question.copyMode === "root-endnote-block")) {
+  if (analysis?.questions?.length && analysis.questions.every((question) => question.copyMode === "root-endnote-block" && !question.preprocessMode)) {
     return DEFAULT_BANK_RULE_ID;
   }
   if (analysis?.questions?.length && analysis.questions.every((question) => question.copyMode === "ebsi-korean-passage")) {
     return EBSI_KOREAN_RULE_ID;
   }
   return null;
+}
+
+export function bankRuleRequiresPreprocessing(ruleId) {
+  return [EBSI_KOREAN_RULE_ID, SUTEUK_SHORT_ESSAY_RULE_ID].includes(ruleId);
 }

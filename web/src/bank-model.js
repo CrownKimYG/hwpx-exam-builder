@@ -1,5 +1,6 @@
 export const DIFFICULTIES = Object.freeze(["유제", "lv1", "lv2", "lv3"]);
 const EBSI_KOREAN_FILENAME_RE = /^\[(\d{5})\]_EBS\s+\d{4}(?:학년도)?\s+(.+?)_\((\d+)\)$/u;
+const SUTEUK_SHORT_ESSAY_FILENAME_RE = /^(\d{2})약술\s+수능특강\s+(수학[12])\s*_\s*(\d{2})\s+(.+)\.(?:hwp|hwpx)$/iu;
 
 export function normalizeKorean(value) {
   return String(value || "").normalize("NFC").trim();
@@ -16,6 +17,18 @@ export function difficultyFromLabel(label) {
 
 export function parseBankFilename(filename) {
   const normalized = normalizeKorean(filename);
+  const suteuk = normalized.match(SUTEUK_SHORT_ESSAY_FILENAME_RE);
+  if (suteuk) {
+    return {
+      subject: suteuk[2],
+      unitNumber: suteuk[3],
+      unitName: normalizeKorean(suteuk[4]),
+      yearLabel: suteuk[1],
+      volume: "",
+      declaredQuestionCount: null,
+      parsed: true,
+    };
+  }
   const stem = normalized.replace(/\.(?:hwp|hwpx)$/i, "");
   const ebsiKorean = stem.match(EBSI_KOREAN_FILENAME_RE);
   if (ebsiKorean && /국어영역/u.test(ebsiKorean[2])) {
@@ -57,6 +70,10 @@ export function isEbsiKoreanBankFilename(filename) {
   const stem = normalized.replace(/\.(?:hwp|hwpx)$/i, "");
   const match = stem.match(EBSI_KOREAN_FILENAME_RE);
   return Boolean(match && /국어영역/u.test(match[2]));
+}
+
+export function isSuteukShortEssayBankFilename(filename) {
+  return SUTEUK_SHORT_ESSAY_FILENAME_RE.test(normalizeKorean(filename));
 }
 
 export function unitKey(metadata) {

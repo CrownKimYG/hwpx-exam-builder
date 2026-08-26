@@ -1,7 +1,9 @@
 import JSZip from "jszip";
 import { normalizeEquationScript } from "./parser.js";
+import { SUTEUK_SHORT_ESSAY_PREPROCESS_MODE } from "./suteuk-short-essay-parser.js";
 
 const SECTION_RE = /^Contents\/section\d+\.xml$/;
+const MASTER_PAGE_RE = /^Contents\/masterpage[^/]*\.xml$/i;
 const SLOT_RE = /^#(\d+)$/;
 const SEQUENTIAL_MARKER = "{{QUESTIONS}}";
 const EXPLANATION_MARKER = "#해설";
@@ -357,12 +359,13 @@ function removeLayoutControls(element) {
   });
 }
 
-function prepareMacroCopyElement(element) {
+function prepareMacroCopyElement(element, { preserveLineLayout = false } = {}) {
   descendants(element, "secPr").forEach((node) => node.remove());
   descendants(element, "colPr").forEach((node) => node.remove());
   // 한/글의 복사·붙여넣기처럼 대상 문서에서 줄 위치만 다시 계산한다.
   // 텍스트, 수식, 표, 그림, 선택지와 미주 내용은 해석하거나 변경하지 않는다.
-  descendants(element, "linesegarray").forEach((node) => node.remove());
+  // 수능특강의 수식은 원본 줄 높이와 줄바꿈 위치를 함께 보존해야 한다.
+  if (!preserveLineLayout) descendants(element, "linesegarray").forEach((node) => node.remove());
   const paragraphs = localName(element) === "p"
     ? [element, ...descendants(element, "p")]
     : descendants(element, "p");
@@ -381,6 +384,8 @@ function hasQuestionContent(elements) {
       || descendants(clone, "equation").length
       || descendants(clone, "pic").length
       || descendants(clone, "tbl").length
+      || ["rect", "container", "line", "ellipse", "arc", "polygon", "curve", "connectLine", "ole"]
+        .some((name) => descendants(clone, name).length)
     );
   });
 }
@@ -406,6 +411,10 @@ function questionIdentity(question) {
 
 function isEbsiKoreanQuestion(question) {
   return question.preprocessMode === EBSI_KOREAN_PREPROCESS_MODE;
+}
+
+function isSuteukQuestion(question) {
+  return question.preprocessMode === SUTEUK_SHORT_ESSAY_PREPROCESS_MODE;
 }
 
 function passageGroupKey(question) {
@@ -629,7 +638,7 @@ function compactHiddenEndnote(note) {
   descendants(note, "linesegarray").forEach((node) => node.remove());
 }
 
-function hideEndnoteFormatting(headerDocument, sectionDocuments) {
+function hideEndnoteFormatting(headerDocument, sectionDocuments, visibleMarkers = new Set()) {
   const hiddenStyleId = ensureHiddenEndnoteStyle(headerDocument);
   sectionDocuments.forEach((documentNode) => {
     descendants(documentNode.documentElement, "endNotePr").forEach((noteProperties) => {
@@ -647,7 +656,7 @@ function hideEndnoteFormatting(headerDocument, sectionDocuments) {
       compactHiddenEndnote(note);
       let markerRun = note.parentElement;
       while (markerRun && localName(markerRun) !== "run") markerRun = markerRun.parentElement;
-      if (markerRun) markerRun.setAttribute("charPrIDRef", hiddenStyleId);
+      if (markerRun && !visibleMarkers.has(note)) markerRun.setAttribute("charPrIDRef", hiddenStyleId);
       descendants(note, "run").forEach((run) => run.setAttribute("charPrIDRef", hiddenStyleId));
       descendants(note, "equation").forEach((equation) => {
         equation.setAttribute("baseUnit", "100");
@@ -679,6 +688,34 @@ function pruneUnusedBinaryItems(contentDocument, roots) {
   return keptPaths;
 }
 
+// 출력의 바탕쪽은 선택한 양식만 사용한다. 첫 원본 ZIP의 바탕쪽은 상속하지 않는다.
+async function templateMasterPages(contentDocument, templateZip, templateContent, maps, fontMaps, binaryMap) {
+  const manifest = firstDescendant(contentDocument.documentElement, "manifest");
+  const spine = firstDescendant(contentDocument.documentElement, "spine");
+  const removedIds = new Set();
+  directChildrenByName(manifest, "item").forEach((item) => {
+    if (!MASTER_PAGE_RE.test(item.getAttribute("href") || "")) return;
+    removedIds.add(item.getAttribute("id"));
+    item.remove();
+  });
+  directChildrenByName(spine, "itemref").forEach((item) => {
+    if (removedIds.has(item.getAttribute("idref"))) item.remove();
+  });
+  const documents = new Map();
+  const templateManifest = firstDescendant(templateContent.documentElement, "manifest");
+  for (const item of directChildrenByName(templateManifest, "item")) {
+    const path = item.getAttribute("href") || "";
+    if (!MASTER_PAGE_RE.test(path)) continue;
+    const entry = templateZip.file(path);
+    if (!entry) throw new Error(`템플릿의 바탕쪽 파일이 없습니다: ${path}`);
+    const documentNode = parseXml(await entry.async("string"), path);
+    remapReferences(documentNode.documentElement, maps, fontMaps, binaryMap);
+    documents.set(path, documentNode);
+    manifest.appendChild(contentDocument.importNode(item, true));
+  }
+  return documents;
+}
+
 async function createOutputZip(sourceZip, overrides, additions, sectionNames, keptBinaryPaths) {
   const output = new JSZip();
   const mimetype = sourceZip.file("mimetype");
@@ -686,7 +723,7 @@ async function createOutputZip(sourceZip, overrides, additions, sectionNames, ke
   output.file("mimetype", await mimetype.async("uint8array"), { binary: true, compression: "STORE" });
 
   for (const entry of Object.values(sourceZip.files)) {
-    if (entry.dir || entry.name === "mimetype" || SECTION_RE.test(entry.name)) continue;
+    if (entry.dir || entry.name === "mimetype" || SECTION_RE.test(entry.name) || MASTER_PAGE_RE.test(entry.name)) continue;
     if (entry.name.startsWith("BinData/") && !keptBinaryPaths.has(entry.name)) continue;
     if (overrides.has(entry.name)) {
       output.file(entry.name, overrides.get(entry.name), { compression: "DEFLATE" });
@@ -695,6 +732,9 @@ async function createOutputZip(sourceZip, overrides, additions, sectionNames, ke
     }
   }
   for (const sectionName of sectionNames) output.file(sectionName, overrides.get(sectionName), { compression: "DEFLATE" });
+  for (const [path, xml] of overrides) {
+    if (MASTER_PAGE_RE.test(path)) output.file(path, xml, { compression: "DEFLATE" });
+  }
   for (const [path, bytes] of additions) {
     if (keptBinaryPaths.has(path)) output.file(path, bytes, { binary: true, compression: "DEFLATE" });
   }
@@ -716,6 +756,7 @@ export async function validateGeneratedExamHwpx(
     expectedQuestionPageBreakCount = null,
     expectedSolutionColumnCount = null,
     expectHiddenEndnotes = false,
+    expectHiddenEndnoteMarkers = true,
     preserveOriginalContent = false,
   } = {},
 ) {
@@ -905,7 +946,7 @@ export async function validateGeneratedExamHwpx(
           || descendants(clone, "tbl").length
         );
       });
-      if (visibleRuns.length || visibleMarkers.length || visibleEquations.length) {
+      if (visibleRuns.length || (expectHiddenEndnoteMarkers && visibleMarkers.length) || visibleEquations.length) {
         errors.push("미주 숨김 서식(1pt·흰색)이 일부 미주 내용 또는 번호 표식에 적용되지 않았습니다.");
       }
       if (hiddenPictures.length || hiddenTables.length) {
@@ -977,6 +1018,7 @@ export async function buildExamFromTemplateHwpx(
   const fontMaps = mergeFonts(sourceHeaderDocument, templateHeaderDocument, binaryMap);
   appendTemplateCollections(sourceHeaderDocument, templateHeaderDocument, maps, fontMaps, binaryMap);
   sourceHeaderDocument.documentElement.setAttribute("secCnt", String(templateSectionNames.length));
+  const masterPages = await templateMasterPages(sourceContentDocument, templateZip, templateContentDocument, maps, fontMaps, binaryMap);
 
   const sourceSectionDocuments = new Map();
   for (const sectionName of new Set(questions.map((question) => question.sectionName))) {
@@ -1025,7 +1067,8 @@ export async function buildExamFromTemplateHwpx(
     throw new Error(`선택 문항 ${selectedQuestions.length}개에 비해 템플릿 문제 슬롯은 ${slotRecords.length}개뿐입니다.`);
   }
 
-  const cloneQuestion = (question, targetDocument) => {
+  const visibleMarkers = new Set();
+  const cloneQuestion = (question, targetDocument, outputIndex) => {
     const sourceDocument = sourceSectionDocuments.get(question.sectionName);
     if (!sourceDocument) throw new Error(`${question.sectionName} 원문을 찾지 못했습니다.`);
     const children = Array.from(sourceDocument.documentElement.children);
@@ -1046,10 +1089,11 @@ export async function buildExamFromTemplateHwpx(
       throw new Error(`${question.sourceLabel || question.ordinal}의 정답·해설 미주가 복사 범위에서 누락됐습니다.`);
     }
     const clones = sourceElements.map((element) => targetDocument.importNode(element, true));
-    clones.forEach((clone, offset) => {
-      if (question.copyMode === "root-endnote-block") prepareMacroCopyElement(clone);
+    clones.forEach((clone) => {
+      if (question.copyMode === "root-endnote-block") prepareMacroCopyElement(clone, { preserveLineLayout: isSuteukQuestion(question) });
       else removeLayoutControls(clone);
     });
+    if (isSuteukQuestion(question)) numberSuteukMarkers(clones, outputIndex, visibleMarkers);
     trimTrailingEmptyQuestionElements(clones);
     if (!clones.length || !hasQuestionContent(clones)) {
       throw new Error(`${question.sourceLabel || question.ordinal}의 정리된 문제 본문이 비어 있습니다.`);
@@ -1064,8 +1108,8 @@ export async function buildExamFromTemplateHwpx(
     clearSlotMarker(sequentialRecord.element);
     const parent = sequentialRecord.element.parentNode;
     const insertionPoint = sequentialRecord.element.nextSibling;
-    selectedQuestions.forEach((question) => {
-      cloneQuestion(question, sequentialRecord.documentNode)
+    selectedQuestions.forEach((question, index) => {
+      cloneQuestion(question, sequentialRecord.documentNode, index + 1)
         .forEach((clone) => parent.insertBefore(clone, insertionPoint));
     });
   } else {
@@ -1076,7 +1120,7 @@ export async function buildExamFromTemplateHwpx(
         clearSlotMarker(slot.element);
         continue;
       }
-      const clones = cloneQuestion(question, slot.documentNode);
+      const clones = cloneQuestion(question, slot.documentNode, index + 1);
       const parent = slot.element.parentNode;
       clones.forEach((clone) => parent.insertBefore(clone, slot.element));
       parent.removeChild(slot.element);
@@ -1084,13 +1128,13 @@ export async function buildExamFromTemplateHwpx(
   }
 
   if (hideEndnotes) {
-    hideEndnoteFormatting(sourceHeaderDocument, [...templateSections.values()]);
+    hideEndnoteFormatting(sourceHeaderDocument, [...templateSections.values()], visibleMarkers);
   }
 
   updateSectionsInContent(sourceContentDocument, templateSectionNames);
   const keptBinaryPaths = pruneUnusedBinaryItems(
     sourceContentDocument,
-    [sourceHeaderDocument, ...templateSections.values()],
+    [sourceHeaderDocument, ...templateSections.values(), ...masterPages.values()],
   );
   const overrides = new Map([
     ["Contents/header.xml", new XMLSerializer().serializeToString(sourceHeaderDocument)],
@@ -1099,6 +1143,7 @@ export async function buildExamFromTemplateHwpx(
   for (const [sectionName, documentNode] of templateSections) {
     overrides.set(sectionName, new XMLSerializer().serializeToString(documentNode));
   }
+  masterPages.forEach((documentNode, path) => overrides.set(path, new XMLSerializer().serializeToString(documentNode)));
   return createOutputZip(sourceZip, overrides, additions, templateSectionNames, keptBinaryPaths);
 }
 
@@ -1278,7 +1323,7 @@ function removeChoiceParagraphs(clones, paragraphs) {
 }
 
 function transformMacroQuestionClones(clones, question, targetDocument, transformMode) {
-  if (transformMode === "original") return;
+  if (transformMode === "original" || isSuteukQuestion(question)) return;
   const identity = question.code || question.sourceLabel || question.ordinal;
   const answer = answerParagraph(clones);
   const answerSymbol = answerChoiceSymbolFromText(answer ? textOf(answer) : "")
@@ -1446,6 +1491,16 @@ function writeQuestionNumber(elements, outputIndex) {
   numberRun.appendChild(text);
   paragraph.insertBefore(numberRun, referenceRun);
   return paragraph;
+}
+
+function numberSuteukMarkers(elements, outputIndex, visibleMarkers) {
+  elements.flatMap((element) => descendants(element, "endNote")).forEach((note) => {
+    // 이 자료의 본문 미주 표식 자체가 문항 번호다. 번호 텍스트를 중복 삽입하지 않는다.
+    note.setAttribute("number", String(outputIndex));
+    descendants(note, "autoNum").filter((node) => node.getAttribute("numType") === "ENDNOTE")
+      .forEach((node) => node.setAttribute("num", String(outputIndex)));
+    visibleMarkers.add(note);
+  });
 }
 
 export function isQuestionNumberCandidateText(value) {
@@ -1624,6 +1679,7 @@ export async function buildExamFromSourcesHwpx(
   const templateFontMaps = mergeFonts(outputHeader, templateHeader, templateBinaries.binaryMap);
   appendTemplateCollections(outputHeader, templateHeader, templateMaps, templateFontMaps, templateBinaries.binaryMap);
   outputHeader.documentElement.setAttribute("secCnt", String(templateSectionNames.length));
+  const masterPages = await templateMasterPages(outputContent, templateZip, templateContent, templateMaps, templateFontMaps, templateBinaries.binaryMap);
 
   const allSlotRecords = [];
   const sequentialRecords = [];
@@ -1654,6 +1710,7 @@ export async function buildExamFromSourcesHwpx(
     explanationRecords.forEach((record) => setParagraphColumns(record.element, 1, 0));
   }
 
+  const visibleMarkers = new Set();
   const cloneQuestion = (
     question,
     targetDocument,
@@ -1693,15 +1750,16 @@ export async function buildExamFromSourcesHwpx(
     } else {
       transformQuestionClones(clones, question, targetDocument, transformMode);
     }
-    clones.forEach((clone, offset) => {
-      if (question.copyMode === "root-endnote-block") prepareMacroCopyElement(clone);
+    clones.forEach((clone) => {
+      if (question.copyMode === "root-endnote-block") prepareMacroCopyElement(clone, { preserveLineLayout: isSuteukQuestion(question) });
       else removeLayoutControls(clone);
     });
     trimTrailingEmptyQuestionElements(clones);
     if (!clones.length || !hasQuestionContent(clones)) {
       throw new Error(`${question.code}의 정리된 문제 본문이 비어 있습니다.`);
     }
-    const numberedParagraph = writeQuestionNumber(questionClones, outputIndex);
+    if (isSuteukQuestion(question)) numberSuteukMarkers(questionClones, outputIndex, visibleMarkers);
+    const numberedParagraph = isSuteukQuestion(question) ? null : writeQuestionNumber(questionClones, outputIndex);
     remapCloneReferences(clones, context);
     if (question.copyMode !== "root-endnote-block") {
       ensureLeftParagraphStyles(outputHeader, clones, {
@@ -1778,10 +1836,10 @@ export async function buildExamFromSourcesHwpx(
   } else {
     explanationRecords.forEach((record) => record.element.remove());
   }
-  if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()]);
+  if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()], visibleMarkers);
 
   updateSectionsInContent(outputContent, templateSectionNames);
-  const keptBinaryPaths = pruneUnusedBinaryItems(outputContent, [outputHeader, ...templateSections.values()]);
+  const keptBinaryPaths = pruneUnusedBinaryItems(outputContent, [outputHeader, ...templateSections.values(), ...masterPages.values()]);
   const overrides = new Map([
     ["Contents/header.xml", new XMLSerializer().serializeToString(outputHeader)],
     ["Contents/content.hpf", new XMLSerializer().serializeToString(outputContent)],
@@ -1789,5 +1847,6 @@ export async function buildExamFromSourcesHwpx(
   templateSections.forEach((documentNode, sectionName) => {
     overrides.set(sectionName, new XMLSerializer().serializeToString(documentNode));
   });
+  masterPages.forEach((documentNode, path) => overrides.set(path, new XMLSerializer().serializeToString(documentNode)));
   return createOutputZip(outputZip, overrides, additions, templateSectionNames, keptBinaryPaths);
 }

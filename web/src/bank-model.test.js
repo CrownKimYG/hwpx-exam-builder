@@ -4,11 +4,24 @@ import {
   createProjectSnapshot,
   difficultyFromLabel,
   isEbsiKoreanBankFilename,
+  isSuteukShortEssayBankFilename,
   normalizeQuestionCode,
   parseBankFilename,
   parseQuestionCodes,
   validateProjectSnapshot,
 } from "./bank-model.js";
+
+test("수능특강 약술 파일명은 과목·연도·단원을 읽고 괄호와 자모 분리를 보존한다", () => {
+  const filename = "27약술 수능특강 수학2 _ 10 도함수의 활용(1).hwp";
+  assert.deepEqual(parseBankFilename(filename.normalize("NFD")), {
+    subject: "수학2", yearLabel: "27", unitNumber: "10", unitName: "도함수의 활용(1)",
+    volume: "", declaredQuestionCount: null, parsed: true,
+  });
+  assert.equal(isSuteukShortEssayBankFilename(filename), true);
+  assert.equal(isSuteukShortEssayBankFilename(filename.replace(".hwp", ".HWPX")), true);
+  assert.equal(isSuteukShortEssayBankFilename(filename.replace(".hwp", ".pdf")), false);
+  assert.equal(isSuteukShortEssayBankFilename("수능특강 수학2.hwp"), false);
+});
 
 test("parses EBS filename metadata", () => {
   const parsed = parseBankFilename("[수능특강 유형] 2027 01.지수와 로그(02)_수학Ⅰ[36문제].hwpx");

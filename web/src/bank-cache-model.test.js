@@ -4,6 +4,9 @@ import {
   AUTO_BANK_RULE_ID,
   DEFAULT_BANK_RULE_ID,
   EBSI_KOREAN_RULE_ID,
+  SUTEUK_SHORT_ESSAY_RULE_ID,
+  BANK_RULES,
+  bankRuleRequiresPreprocessing,
   createBankProfile,
   detectBankRule,
   detectBankRuleFromFilenames,
@@ -130,9 +133,12 @@ test("기존 EBSi 국어 파일별 캐시는 새 국어 유형으로 유지한�
 test("파일명으로 처리 방식이 섞인 폴더를 거부한다", () => {
   const math = bankFile("은행/01.지수와 로그(01)_수학Ⅰ[36문제].hwpx", 100);
   const korean = bankFile("은행/[26001]_EBS 2027학년도 국어영역 문학_(315).hwpx", 200);
+  const suteuk = bankFile("은행/27약술 수능특강 수학1 _ 01 지수와 로그.hwp".normalize("NFD"), 300);
   assert.equal(detectBankRuleFromFilenames([math]), DEFAULT_BANK_RULE_ID);
   assert.equal(detectBankRuleFromFilenames([korean]), EBSI_KOREAN_RULE_ID);
+  assert.equal(detectBankRuleFromFilenames([suteuk]), SUTEUK_SHORT_ESSAY_RULE_ID);
   assert.throws(() => detectBankRuleFromFilenames([math, korean]), /함께 넣을 수 없습니다/);
+  assert.throws(() => detectBankRuleFromFilenames([math, suteuk]), /함께 넣을 수 없습니다/);
 });
 
 test("같은 원본의 HWP와 HWPX가 있으면 HWPX만 사용한다", () => {
@@ -148,7 +154,35 @@ test("문항이 있는 미주 복사 분석만 처리 방식을 확정한다", (
   assert.equal(detectBankRule({ questions: [] }), null);
   assert.equal(detectBankRule({ questions: [{ copyMode: "root-endnote-block" }] }), DEFAULT_BANK_RULE_ID);
   assert.equal(detectBankRule({ questions: [{ copyMode: "root-endnote-block", preprocessMode: "ebsi-endnote-v1" }] }), EBSI_KOREAN_RULE_ID);
+  assert.equal(detectBankRule({ questions: [{ copyMode: "root-endnote-block", preprocessMode: "suteuk-short-essay-v1" }] }), SUTEUK_SHORT_ESSAY_RULE_ID);
+  assert.equal(detectBankRule({ questions: [{ copyMode: "root-endnote-block", preprocessMode: "unknown-v2" }] }), null);
   assert.equal(serializeBankAnalysis({ filename: "empty.hwpx", questions: [] }), null);
+});
+
+test("수능특강 캐시는 원문 유형·소주제·출처·경고를 유지하고 재연결 때 전처리한다", () => {
+  const descriptor = describeBankFolder([bankFile("은행/27약술 수능특강 수학1 _ 01 지수와 로그.hwp", 100)]);
+  const profile = createBankProfile({ descriptor, ruleId: SUTEUK_SHORT_ESSAY_RULE_ID, bankId: "suteuk" });
+  assert.equal(profile.subject, "수학");
+  assert.equal(migrateBankProfile(profile).ruleId, SUTEUK_SHORT_ESSAY_RULE_ID);
+  assert.equal(BANK_RULES.find((r) => r.id === profile.ruleId).label, "[수학] 수능특강");
+  const analysis = {
+    filename: descriptor.manifest[0].name,
+    ruleId: SUTEUK_SHORT_ESSAY_RULE_ID,
+    preprocessMode: "suteuk-short-essay-v1",
+    warnings: ["코드 중복"],
+    questions: [{ ordinal: 2, copyMode: "root-endnote-block", preprocessMode: "suteuk-short-essay-v1", sourceType: "연습문제", subtopic: "극한", subtopicSource: "previous-lesson", sourceCode: "[26009-0001]", sourceCodes: ["[26009-0001]"], copyStart: 3, copyEnd: 6, warnings: ["코드 중복"] }],
+  };
+  const hydrated = hydrateBankAnalysis(serializeBankAnalysis(analysis));
+  assert.equal(detectBankRule(hydrated), SUTEUK_SHORT_ESSAY_RULE_ID);
+  assert.equal(hydrated.questions[0].sourceType, "연습문제");
+  assert.equal(hydrated.questions[0].subtopic, "극한");
+  assert.equal(hydrated.questions[0].subtopicSource, "previous-lesson");
+  assert.deepEqual(hydrated.questions[0].sourceCodes, ["[26009-0001]"]);
+  assert.deepEqual(hydrated.warnings, ["코드 중복"]);
+  assert.equal(bankRuleRequiresPreprocessing(SUTEUK_SHORT_ESSAY_RULE_ID), true);
+  assert.equal(bankRuleRequiresPreprocessing(EBSI_KOREAN_RULE_ID), true);
+  assert.equal(bankRuleRequiresPreprocessing(DEFAULT_BANK_RULE_ID), false);
+  assert.notEqual(fileAnalysisCacheKey("suteuk", descriptor.manifest[0], SUTEUK_SHORT_ESSAY_RULE_ID), fileAnalysisCacheKey("suteuk", descriptor.manifest[0], DEFAULT_BANK_RULE_ID));
 });
 
 test("EBSi 국어 지문·정답·해설 범위를 캐시에 저장한다", () => {
