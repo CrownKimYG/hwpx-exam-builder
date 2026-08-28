@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import { normalizeEquationScript } from "./parser.js";
 import { SUTEUK_SHORT_ESSAY_PREPROCESS_MODE } from "./suteuk-short-essay-parser.js";
+import { fitTemplateObjects } from "./template-layout.js";
 
 const SECTION_RE = /^Contents\/section\d+\.xml$/;
 const MASTER_PAGE_RE = /^Contents\/masterpage[^/]*\.xml$/i;
@@ -574,6 +575,29 @@ function clearSlotMarker(paragraph) {
   descendants(paragraph, "t").forEach((node) => { node.textContent = ""; });
 }
 
+function preserveSlotLayout(slot, clones) {
+  const firstParagraph = clones.find((node) => localName(node) === "p");
+  const run = firstParagraph && directChildrenByName(firstParagraph, "run")[0];
+  if (!run) return;
+  for (const attribute of ["pageBreak", "columnBreak"]) {
+    if (slot.getAttribute(attribute) === "1") firstParagraph.setAttribute(attribute, "1");
+  }
+  const controls = slot.ownerDocument.createDocumentFragment();
+  for (const sourceRun of directChildrenByName(slot, "run")) {
+    for (const control of [...sourceRun.children]) {
+      if (localName(control) === "secPr") controls.appendChild(control);
+      if (localName(control) === "ctrl") {
+        const columns = directChildrenByName(control, "colPr");
+        if (!columns.length) continue;
+        const wrapper = control.cloneNode(false);
+        columns.forEach((column) => wrapper.appendChild(column));
+        controls.appendChild(wrapper);
+      }
+    }
+  }
+  run.insertBefore(controls, run.firstChild);
+}
+
 function replaceParagraphText(paragraph, value) {
   const textNodes = descendants(paragraph, "t");
   textNodes.forEach((node, index) => { node.textContent = index === 0 ? value : ""; });
@@ -1068,6 +1092,7 @@ export async function buildExamFromTemplateHwpx(
   }
 
   const visibleMarkers = new Set();
+  const copiedRoots = new Set();
   const cloneQuestion = (question, targetDocument, outputIndex) => {
     const sourceDocument = sourceSectionDocuments.get(question.sectionName);
     if (!sourceDocument) throw new Error(`${question.sectionName} 원문을 찾지 못했습니다.`);
@@ -1101,6 +1126,7 @@ export async function buildExamFromTemplateHwpx(
     if (question.copyMode !== "root-endnote-block") {
       ensureLeftParagraphStyles(sourceHeaderDocument, clones);
     }
+    clones.forEach((clone) => copiedRoots.add(clone));
     return clones;
   };
 
@@ -1121,12 +1147,14 @@ export async function buildExamFromTemplateHwpx(
         continue;
       }
       const clones = cloneQuestion(question, slot.documentNode, index + 1);
+      preserveSlotLayout(slot.element, clones);
       const parent = slot.element.parentNode;
       clones.forEach((clone) => parent.insertBefore(clone, slot.element));
       parent.removeChild(slot.element);
     }
   }
 
+  fitTemplateObjects([...templateSections.values()], sourceHeaderDocument, copiedRoots);
   if (hideEndnotes) {
     hideEndnoteFormatting(sourceHeaderDocument, [...templateSections.values()], visibleMarkers);
   }
@@ -1567,6 +1595,7 @@ function addSolutionsAppendix(
   sourceContexts,
   outputHeader,
   transformMode,
+  copiedRoots,
 ) {
   let targetRecord = explanationRecords[0] || null;
   explanationRecords.slice(targetRecord ? 1 : 0).forEach((record) => clearSlotMarker(record.element));
@@ -1602,7 +1631,10 @@ function addSolutionsAppendix(
     // Explanation equations are frequently taller than the surrounding text.
     // A wider minimum prevents the renderer from stacking adjacent lines.
     ensureLeftParagraphStyles(outputHeader, paragraphs, { minimumLineSpacingPercent: 220 });
-    paragraphs.forEach((paragraph) => parent.insertBefore(paragraph, insertionPoint));
+    paragraphs.forEach((paragraph) => {
+      copiedRoots.add(paragraph);
+      parent.insertBefore(paragraph, insertionPoint);
+    });
   });
 }
 
@@ -1711,6 +1743,7 @@ export async function buildExamFromSourcesHwpx(
   }
 
   const visibleMarkers = new Set();
+  const copiedRoots = new Set();
   const cloneQuestion = (
     question,
     targetDocument,
@@ -1770,6 +1803,7 @@ export async function buildExamFromSourcesHwpx(
         removeHeadingElements: new Set([numberedParagraph]),
       });
     }
+    clones.forEach((clone) => copiedRoots.add(clone));
     return clones;
   };
 
@@ -1814,10 +1848,12 @@ export async function buildExamFromSourcesHwpx(
       }
       const parent = slot.element.parentNode;
       const currentPassageKey = passageGroupKey(question);
-      cloneQuestion(question, slot.documentNode, {
+      const clones = cloneQuestion(question, slot.documentNode, {
         includePassage: currentPassageKey !== previousPassageKey,
         outputIndex: questionNumberStart + index,
-      }).forEach((clone) => parent.insertBefore(clone, slot.element));
+      });
+      preserveSlotLayout(slot.element, clones);
+      clones.forEach((clone) => parent.insertBefore(clone, slot.element));
       parent.removeChild(slot.element);
       previousPassageKey = currentPassageKey;
     });
@@ -1832,10 +1868,12 @@ export async function buildExamFromSourcesHwpx(
       sourceContexts,
       outputHeader,
       transformMode,
+      copiedRoots,
     );
   } else {
     explanationRecords.forEach((record) => record.element.remove());
   }
+  fitTemplateObjects([...templateSections.values()], outputHeader, copiedRoots);
   if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()], visibleMarkers);
 
   updateSectionsInContent(outputContent, templateSectionNames);

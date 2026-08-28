@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fittedTableCells, templateTextWidth } from "./template-layout.js";
 import {
   answerChoiceSymbolFromText,
   choiceSymbolFromShapeComment,
@@ -38,4 +39,41 @@ test("문항 번호는 워터마크나 난이도 표식이 아닌 본문에 붙�
   assert.equal(isQuestionNumberCandidateText("zocbo.com"), false);
   assert.equal(isQuestionNumberCandidateText("❙ 예제1 유사유형"), false);
   assert.equal(isQuestionNumberCandidateText("다음 식의 값을 구하시오."), true);
+});
+
+test("템플릿의 좌우 여백, 제본 여백, 단 간격으로 입력 너비를 구한다", () => {
+  const page = { pageWidth: 59528, left: 4252, right: 4252 };
+  assert.equal(templateTextWidth(page), 51024);
+  assert.equal(templateTextWidth({ ...page, columnCount: 2, columnGap: 2268 }), 24378);
+  assert.equal(templateTextWidth({ ...page, gutter: 1000 }), 50024);
+  assert.equal(templateTextWidth({ ...page, gutter: 1000, gutterType: "TOP_ONLY" }), 51024);
+  assert.equal(templateTextWidth({ pageWidth: 0 }), null);
+  assert.equal(templateTextWidth({ ...page, columnCount: 2, columnGap: 60000 }), null);
+});
+
+test("너비가 다른 다단은 자동 흐름에서도 넘치지 않는 최소 폭을 사용한다", () => {
+  assert.equal(templateTextWidth({ pageWidth: 51024, columnCount: 2, columnWidths: [20000, 29000] }), 20000);
+});
+
+test("표의 열 비율과 병합 셀 경계가 반올림 후에도 일치한다", () => {
+  const cells = [
+    { column: 0, span: 1, width: 10000 },
+    { column: 1, span: 1, width: 10000 },
+    { column: 2, span: 1, width: 10000 },
+    { column: 0, span: 2, width: 20000 },
+    { column: 2, span: 1, width: 10000 },
+  ];
+  const fitted = fittedTableCells(cells, 3, 30000, 50000);
+  assert.deepEqual(fitted, [16667, 16666, 16667, 33333, 16667]);
+  assert.equal(fitted[0] + fitted[1], fitted[3]);
+  assert.equal(fitted[3] + fitted[4], 50000);
+});
+
+test("셀 간격을 고정하고 병합으로 가려진 열 경계도 보정한다", () => {
+  assert.deepEqual(fittedTableCells([
+    { column: 0, span: 2, width: 20100 }, { column: 2, span: 1, width: 10000 },
+  ], 3, 30200, 15200, 100), [10100, 5000]);
+  assert.equal(fittedTableCells([], 0, 0, 10000), null);
+  assert.equal(fittedTableCells([], 2, 10000, 0), null);
+  assert.equal(fittedTableCells([], NaN, 10000, 20000), null);
 });

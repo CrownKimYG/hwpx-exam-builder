@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import { prepareSuteukShortEssayHwpx } from "../src/suteuk-short-essay-parser.js";
 import { buildExamFromSourcesHwpx, buildExamFromTemplateHwpx, validateGeneratedExamHwpx } from "../src/template-builder.js";
+import { fitTemplateObjects } from "../src/template-layout.js";
 
 const HP = "http://www.hancom.co.kr/hwpml/2011/paragraph";
 const HS = "http://www.hancom.co.kr/hwpml/2011/section";
@@ -40,6 +41,91 @@ async function addMasterPage(zip, label) {
     reference.setAttribute("idRef", "masterpage0");
     properties.append(reference);
     zip.file("Contents/section0.xml", xml(section));
+  }
+}
+
+const rectangle = (id, label, width = 30000) => `<hp:rect id="${id}" groupLevel="0">
+  <hp:orgSz width="10000" height="10000"/><hp:curSz width="${width}" height="4294959948"/>
+  <hp:rotationInfo angle="0" centerX="${width / 2}" centerY="3000"/>
+  <hp:renderingInfo><hc:scaMatrix e1="${width / 10000}" e2="0" e3="0" e4="0" e5="-0.8" e6="6000"/></hp:renderingInfo>
+  <hp:drawText lastWidth="${width}"><hp:subList textWidth="0">${p(id + 1, run(`<hp:t>${label}</hp:t>`))}</hp:subList><hp:textMargin left="100" right="100"/></hp:drawText>
+  <hp:sz width="${width}" widthRelTo="ABSOLUTE" height="1200" heightRelTo="ABSOLUTE"/>
+  <hp:pos treatAsChar="1" horzOffset="1000" horzRelTo="COLUMN" horzAlign="LEFT"/>
+  <hp:outMargin left="0" right="0"/>
+</hp:rect>`;
+const cell = (column, span, width, content, row = 0) => `<hp:tc hasMargin="0"><hp:subList textWidth="0">${content}</hp:subList>
+  <hp:cellAddr colAddr="${column}" rowAddr="${row}"/><hp:cellSpan colSpan="${span}" rowSpan="1"/>
+  <hp:cellSz width="${width}" height="4000"/><hp:cellMargin left="9000" right="9000"/></hp:tc>`;
+const table = (id, width, cols, rows, inner = 1200, outer = 500) => `<hp:tbl id="${id}" colCnt="${cols}" rowCnt="${rows.length}" cellSpacing="0">
+  <hp:sz width="${width}" widthRelTo="ABSOLUTE" height="8000" heightRelTo="ABSOLUTE"/>
+  <hp:pos treatAsChar="1" horzOffset="0"/><hp:outMargin left="${outer / 2}" right="${outer / 2}"/>
+  <hp:inMargin left="${inner / 2}" right="${inner / 2}"/>${rows.map((row) => `<hp:tr>${row}</hp:tr>`).join("")}</hp:tbl>`;
+
+async function testTemplateWidths(template) {
+  const fixture = await JSZip.loadAsync(template);
+  const sourceXml = sections(
+    heading(410, "약술법") + p(420, run(note(421, 1) + "<hp:t>너비 검증 문제</hp:t>"))
+    + p(500, run(rectangle(501, "본문 조건 상자의 너비 검증")))
+    + p(600, run(table(601, 30000, 3, [
+      cell(0, 1, 10000, p(610, run(rectangle(611, "셀 안 조건 상자"))))
+        + cell(1, 1, 10000, p(620, run("<hp:t>두 번째 열</hp:t>")))
+        + cell(2, 1, 10000, p(630, run("<hp:t>세 번째 열</hp:t>"))),
+      cell(0, 2, 20000, p(640, run("<hp:t>병합 셀</hp:t>")), 1)
+        + cell(2, 1, 10000, p(650, run("<hp:t>마지막 셀</hp:t>")), 1),
+    ])))
+    + p(700, run(rectangle(701, "풀이", 2551) + "<hp:t>작은 표식은 그대로</hp:t>"))
+    + p(800, run('<hp:rect id="801"><hp:sz width="9000" widthRelTo="ABSOLUTE"/></hp:rect>')),
+  );
+  // A source table may store 100% rather than an absolute width. Its cells
+  // still carry the original column geometry.
+  const sourceRoot = parse(sourceXml);
+  const gridSize = [...desc(sourceRoot, "tbl")[0].children].find((node) => node.localName === "sz");
+  gridSize.setAttribute("width", "10000");
+  gridSize.setAttribute("widthRelTo", "COLUMN");
+  fixture.file("Contents/section0.xml", xml(sourceRoot));
+  const prepared = await prepareSuteukShortEssayHwpx(new File([await bytes(fixture)], "27약술 수능특강 수학1 _ 01 너비.hwpx"));
+  const question = { ...prepared.analysis.questions[0], fileCode: "01", code: "01-1" };
+  assert(prepared.analysis.questions.length === 1, "너비 검증 문항 추출 실패");
+  const layouts = [
+    { columns: 1, expected: 49000 }, { columns: 2, expected: 23500 }, { columns: 1, nested: true, expected: 16000 },
+  ];
+  for (const layout of layouts) {
+    const custom = await JSZip.loadAsync(template);
+    const controls = '<hp:secPr><hp:pagePr width="60000" height="84000" gutterType="LEFT_ONLY"><hp:margin left="5000" right="5000" gutter="1000"/></hp:pagePr></hp:secPr>'
+      + `<hp:ctrl><hp:colPr colCount="${layout.columns}" sameSz="1" sameGap="2000"/></hp:ctrl>`;
+    const slot = layout.nested
+      ? p(1, run(controls)) + p(2, run("<hp:t>슬롯 표</hp:t>" + table(200, 18000, 1, [cell(0, 1, 18000, p(3, run("<hp:t>#1</hp:t>")))], 2000, 0)))
+      : p(1, run(controls + "<hp:t>#1</hp:t>"));
+    custom.file("Contents/section0.xml", sections(slot));
+    for (const output of [
+      await buildExamFromSourcesHwpx([{ id: "01", bytes: prepared.bytes }], await bytes(custom), [question]),
+      await buildExamFromTemplateHwpx(prepared.bytes, await bytes(custom), [question], [question.ordinal]),
+    ]) {
+      const root = await readSection(output);
+      const byId = (tag, id) => desc(root, tag).find((node) => node.getAttribute("id") === String(id));
+      const direct = (node, tag) => [...node.children].find((item) => item.localName === tag);
+      const width = (node) => Number(direct(node, "sz").getAttribute("width"));
+      const box = byId("rect", 501);
+      assert(width(box) === layout.expected, `본문 상자 너비: ${width(box)} / ${layout.expected}`);
+      assert(direct(box, "curSz").getAttribute("width") === String(layout.expected), "사각형 현재 너비 불일치");
+      assert(direct(box, "drawText").getAttribute("lastWidth") === String(layout.expected), "글상자 너비 불일치");
+      assert(direct(box, "curSz").getAttribute("height") === "-7348", "도형 높이 signed 32비트 정규화 누락");
+      assert(Math.abs(Number(desc(box, "scaMatrix")[0].getAttribute("e1")) - layout.expected / 10000) < 1e-8, "사각형 가로 변환 누락");
+      assert(desc(box, "lineseg")[0].getAttribute("vertsize") === "2400", "수식 줄 높이 유실");
+      assert(width(byId("rect", 701)) === 2551 && width(byId("rect", 801)) === 9000, "작은 표식 또는 도형이 늘어남");
+      const grid = byId("tbl", 601);
+      const cells = [...grid.children].filter((n) => n.localName === "tr").flatMap((row) => [...row.children]);
+      const widths = cells.map((n) => Number(direct(n, "cellSz").getAttribute("width")));
+      assert(width(grid) === layout.expected - 500 && widths[0] + widths[1] + widths[2] === width(grid), "표/셀 전체 너비 불일치");
+      assert(widths[3] === widths[0] + widths[1] && widths[3] + widths[4] === width(grid), "병합 셀 경계 불일치");
+      assert(width(byId("rect", 611)) === widths[0] - 1200, "셀 내부 여백 미반영");
+      if (layout.nested) assert(width(byId("tbl", 200)) === 18000, "템플릿 자체 표 변경");
+      assert(desc(root, "pagePr").length === 1 && desc(root, "colPr").length === 1, "슬롯 문단의 용지/단 설정 유실");
+      const before = xml(root);
+      const header = parse(await (await JSZip.loadAsync(output)).file("Contents/header.xml").async("string"));
+      fitTemplateObjects([root], header, new Set(desc(root, "p").filter((node) => [420, 500, 600, 700, 800].includes(Number(node.getAttribute("id"))))));
+      assert(xml(root) === before, "너비 보정의 중복 적용으로 크기가 달라짐");
+    }
   }
 }
 
@@ -100,7 +186,8 @@ document.querySelector("#run").addEventListener("click", async () => {
       const imageItem = desc(content, "item").find((n) => n.getAttribute("id") === imageId);
       assert(imageItem && zip.file(imageItem.getAttribute("href")), "템플릿 바탕쪽 이미지 참조 유실");
     }
-    result.textContent = "PASS · 분류 / 코드 전용 문단 / 도형 보존 / 미주·수식·줄 배치 / 재번호 / 문제지 답 숨김 / 원본 배경 제외 / 템플릿 배경·이미지 보존";
+    await testTemplateWidths(template);
+    result.textContent = "PASS · 분류 / 코드 전용 문단 / 도형 보존 / 미주·수식·줄 배치 / 재번호 / 문제지 답 숨김 / 원본 배경 제외 / 템플릿 배경·이미지 보존 / 1·2단 너비 / 병합 셀 / 중첩 슬롯 / 작은 표식 보존 / 너비 보정 재실행";
   } catch (error) {
     result.textContent = `FAIL · ${error.stack}`;
   }
