@@ -270,6 +270,69 @@ function appendTemplateCollections(sourceDocument, templateDocument, maps, fontM
   }
 }
 
+function pruneUnusedReferenceItems(headerDocument, contentDocuments) {
+  const containers = new Map();
+  const itemsByRef = new Map();
+  const needed = new Map();
+  for (const [containerName, itemName, refName] of COLLECTIONS) {
+    const container = findRefContainer(headerDocument, containerName);
+    if (!container) continue;
+    const items = new Map(
+      directChildrenByName(container, itemName)
+        .map((item) => [item.getAttribute("id"), item])
+        .filter(([id]) => id != null),
+    );
+    containers.set(refName, { container, itemName, items });
+    itemsByRef.set(refName, items);
+    // HWPX readers use ID 0 as the implicit default in several collections.
+    needed.set(refName, new Set(items.has("0") ? ["0"] : []));
+  }
+
+  const refNames = new Map(Object.entries(REF_TO_MAP));
+  const scan = (root) => {
+    let changed = false;
+    const elements = [root, ...descendants(root, "*")];
+    for (const element of elements) {
+      for (const [attribute, refName] of refNames) {
+        const value = element.getAttribute?.(attribute);
+        // UINT32_MAX is the HWP sentinel for an inherited/no character style.
+        if (value == null || value === "4294967295" || !needed.has(refName)) continue;
+        const refs = needed.get(refName);
+        if (!refs.has(value)) {
+          refs.add(value);
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  };
+
+  contentDocuments.forEach((documentNode) => scan(documentNode.documentElement));
+  const refList = firstDescendant(headerDocument.documentElement, "refList");
+  Array.from(headerDocument.documentElement.children)
+    .filter((element) => element !== refList)
+    .forEach(scan);
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [refName, ids] of needed) {
+      for (const id of ids) {
+        const item = itemsByRef.get(refName)?.get(id);
+        if (item) changed = scan(item) || changed;
+      }
+    }
+  }
+
+  for (const [refName, { container, itemName }] of containers) {
+    const refs = needed.get(refName);
+    directChildrenByName(container, itemName).forEach((item) => {
+      if (!refs.has(item.getAttribute("id"))) item.remove();
+    });
+    container.setAttribute("itemCnt", String(directChildrenByName(container, itemName).length));
+  }
+}
+
 function uniqueBinaryId(sourceManifest, preferred, prefix = "tpl") {
   const used = new Set(descendants(sourceManifest, "item").map((item) => item.getAttribute("id")).filter(Boolean));
   let candidate = `${prefix}_${preferred}`;
@@ -1159,6 +1222,11 @@ export async function buildExamFromTemplateHwpx(
     hideEndnoteFormatting(sourceHeaderDocument, [...templateSections.values()], visibleMarkers);
   }
 
+  pruneUnusedReferenceItems(
+    sourceHeaderDocument,
+    [...templateSections.values(), ...masterPages.values()],
+  );
+
   updateSectionsInContent(sourceContentDocument, templateSectionNames);
   const keptBinaryPaths = pruneUnusedBinaryItems(
     sourceContentDocument,
@@ -1875,6 +1943,7 @@ export async function buildExamFromSourcesHwpx(
   }
   fitTemplateObjects([...templateSections.values()], outputHeader, copiedRoots);
   if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()], visibleMarkers);
+  pruneUnusedReferenceItems(outputHeader, [...templateSections.values(), ...masterPages.values()]);
 
   updateSectionsInContent(outputContent, templateSectionNames);
   const keptBinaryPaths = pruneUnusedBinaryItems(outputContent, [outputHeader, ...templateSections.values(), ...masterPages.values()]);
