@@ -162,6 +162,12 @@ function nextNumericId(elements) {
   return Math.max(-1, ...elements.map((element) => Number(element.getAttribute("id"))).filter(Number.isFinite)) + 1;
 }
 
+export function denseReferenceIdPairs(ids) {
+  const values = ids.map((id) => String(id));
+  const start = values.includes("0") ? 0 : 1;
+  return values.map((id, index) => [id, String(start + index)]);
+}
+
 function findRefContainer(documentNode, name) {
   return firstDescendant(documentNode.documentElement, name);
 }
@@ -343,6 +349,52 @@ function pruneUnusedReferenceItems(headerDocument, contentDocuments) {
     });
     container.setAttribute("itemCnt", String(directChildrenByName(container, itemName).length));
   }
+
+  // Hancom resolves these collections as dense arrays in addition to reading
+  // their explicit IDs. Pruning while retaining IDs such as 65 or 201 leaves
+  // valid-looking XML whose table borders and other formatting disappear.
+  // Reassign every retained item in document order and update all references.
+  const denseMaps = {};
+  for (const [containerName, itemName, refName] of COLLECTIONS) {
+    const container = findRefContainer(headerDocument, containerName);
+    const items = directChildrenByName(container, itemName);
+    if (!items.length) continue;
+    const pairs = denseReferenceIdPairs(items.map((item) => item.getAttribute("id")));
+    denseMaps[refName] = new Map(pairs);
+    items.forEach((item, index) => item.setAttribute("id", pairs[index][1]));
+  }
+  remapReferences(headerDocument.documentElement, denseMaps, new Map(), new Map());
+  contentDocuments.forEach((documentNode) => {
+    remapReferences(documentNode.documentElement, denseMaps, new Map(), new Map());
+  });
+}
+
+function referenceCollectionErrors(headerDocument, contentDocuments) {
+  const errors = [];
+  const idsByRef = new Map();
+  for (const [containerName, itemName, refName] of COLLECTIONS) {
+    const items = directChildrenByName(findRefContainer(headerDocument, containerName), itemName);
+    const ids = items.map((item) => item.getAttribute("id"));
+    idsByRef.set(refName, new Set(ids));
+    const expected = denseReferenceIdPairs(ids).map(([, id]) => id);
+    if (ids.some((id, index) => id !== expected[index])) {
+      errors.push(`${containerName} 서식 ID가 연속 번호가 아닙니다.`);
+    }
+  }
+
+  const dangling = new Set();
+  [headerDocument, ...contentDocuments].forEach((documentNode) => {
+    const root = documentNode.documentElement;
+    [root, ...descendants(root, "*")].forEach((element) => {
+      for (const [attribute, refName] of Object.entries(REF_TO_MAP)) {
+        const value = element.getAttribute?.(attribute);
+        if (value == null || value === "0" || value === "4294967295") continue;
+        if (!idsByRef.get(refName)?.has(value)) dangling.add(`${attribute}=${value}`);
+      }
+    });
+  });
+  if (dangling.size) errors.push(`존재하지 않는 서식 참조가 있습니다: ${[...dangling].join(", ")}`);
+  return errors;
 }
 
 function uniqueBinaryId(sourceManifest, preferred, prefix = "tpl") {
@@ -1007,6 +1059,11 @@ export async function validateGeneratedExamHwpx(
   } else {
     const contentDocument = parseXml(await contentEntry.async("string"), "Contents/content.hpf");
     const headerDocument = parseXml(await headerEntry.async("string"), "Contents/header.xml");
+    const masterPageDocuments = [];
+    for (const path of Object.keys(zip.files).filter((name) => MASTER_PAGE_RE.test(name))) {
+      masterPageDocuments.push(parseXml(await zip.file(path).async("string"), path));
+    }
+    errors.push(...referenceCollectionErrors(headerDocument, [...sectionDocuments, ...masterPageDocuments]));
     if (expectHiddenEndnotes) {
       const styles = new Map(
         directChildrenByName(findRefContainer(headerDocument, "charProperties"), "charPr")

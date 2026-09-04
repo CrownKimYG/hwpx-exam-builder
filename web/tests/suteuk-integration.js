@@ -171,6 +171,24 @@ document.querySelector("#run").addEventListener("click", async () => {
       .every((p) => [...p.children].some((n) => n.localName === "linesegarray")), "문제 줄 배치 유실");
     assert(!desc(root, "t").some((t) => /^\d+\. $/.test(t.textContent)), "문항 번호 중복");
     await validateGeneratedExamHwpx(output, { expectedQuestionCount: 2, preserveOriginalContent: true });
+    const sparse = await JSZip.loadAsync(output);
+    const sparseHeader = parse(await sparse.file("Contents/header.xml").async("string"));
+    const movedBorder = desc(sparseHeader, "borderFill").find((node) => node.getAttribute("id") === "1");
+    movedBorder.setAttribute("id", "65");
+    for (const path of Object.keys(sparse.files).filter((name) => /^Contents\/(?:section\d+|masterpage[^/]*)\.xml$/i.test(name))) {
+      const documentNode = parse(await sparse.file(path).async("string"));
+      desc(documentNode, "*").filter((node) => node.getAttribute("borderFillIDRef") === "1")
+        .forEach((node) => node.setAttribute("borderFillIDRef", "65"));
+      sparse.file(path, xml(documentNode));
+    }
+    sparse.file("Contents/header.xml", xml(sparseHeader));
+    let sparseRejected = false;
+    try {
+      await validateGeneratedExamHwpx(await bytes(sparse), { expectedQuestionCount: 2, preserveOriginalContent: true });
+    } catch (error) {
+      sparseRejected = /borderFills 서식 ID가 연속 번호가 아닙니다/.test(error.message);
+    }
+    assert(sparseRejected, "희소 테두리 서식 ID를 검증에서 허용함");
     const problem = await buildExamFromSourcesHwpx(inputs, template, selected, { useDefaultLayout: true, hideEndnotes: true });
     await validateGeneratedExamHwpx(problem, { expectedQuestionCount: 2, preserveOriginalContent: true, expectHiddenEndnotes: true, expectHiddenEndnoteMarkers: false });
     const problemRoot = await readSection(problem);
@@ -193,7 +211,7 @@ document.querySelector("#run").addEventListener("click", async () => {
       assert(imageItem && zip.file(imageItem.getAttribute("href")), "템플릿 바탕쪽 이미지 참조 유실");
     }
     await testTemplateWidths(template);
-    result.textContent = "PASS · 분류 / 코드 전용 문단 / 도형 보존 / 미주·수식·줄 배치 / 재번호 / 문제지 답 숨김 / 원본 배경 제외 / 템플릿 배경·이미지 보존 / 1·2단 너비 / 병합 셀 / 중첩 슬롯 / 작은 표식 보존 / 너비 보정 재실행";
+    result.textContent = "PASS · 분류 / 코드 전용 문단 / 도형 보존 / 미주·수식·줄 배치 / 재번호 / 문제지 답 숨김 / 원본 배경 제외 / 템플릿 배경·이미지 보존 / 서식 ID 연속화 / 1·2단 너비 / 병합 셀 / 중첩 슬롯 / 작은 표식 보존 / 너비 보정 재실행";
   } catch (error) {
     result.textContent = `FAIL · ${error.stack}`;
   }

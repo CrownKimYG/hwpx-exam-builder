@@ -4,11 +4,21 @@ import { fittedTableCells, templateTextWidth } from "./template-layout.js";
 import {
   answerChoiceSymbolFromText,
   choiceSymbolFromShapeComment,
+  denseReferenceIdPairs,
   hasCompleteChoiceSet,
   isQuestionNumberCandidateText,
   ownParagraphText,
   rewriteEssayPromptText,
 } from "./template-builder.js";
+
+test("정리한 HWPX 참조 서식 ID를 한컴 호환 연속 번호로 다시 배치한다", () => {
+  assert.deepEqual(denseReferenceIdPairs(["1", "3", "65", "77"]), [
+    ["1", "1"], ["3", "2"], ["65", "3"], ["77", "4"],
+  ]);
+  assert.deepEqual(denseReferenceIdPairs(["0", "14", "201"]), [
+    ["0", "0"], ["14", "1"], ["201", "2"],
+  ]);
+});
 
 test("중첩 표의 슬롯 표식은 실제 안쪽 문단만 소유한다", () => {
   const outer = { localName: "p" };
