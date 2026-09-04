@@ -394,6 +394,24 @@ function referenceCollectionErrors(headerDocument, contentDocuments) {
     });
   });
   if (dangling.size) errors.push(`존재하지 않는 서식 참조가 있습니다: ${[...dangling].join(", ")}`);
+
+  const fontIdsByLanguage = new Map();
+  for (const fontface of directChildrenByName(findRefContainer(headerDocument, "fontfaces"), "fontface")) {
+    const fonts = directChildrenByName(fontface, "font");
+    fontIdsByLanguage.set(fontface.getAttribute("lang"), new Set(fonts.map((font) => font.getAttribute("id"))));
+    if (fontface.getAttribute("fontCnt") !== String(fonts.length)) {
+      errors.push(`${fontface.getAttribute("lang") || "UNKNOWN"} 글꼴 개수 정보가 일치하지 않습니다.`);
+    }
+  }
+  const danglingFonts = new Set();
+  descendants(headerDocument.documentElement, "fontRef").forEach((fontRef) => {
+    for (const [attribute, language] of Object.entries(FONT_ATTR_TO_LANG)) {
+      const value = fontRef.getAttribute(attribute);
+      if (value == null || value === "4294967295") continue;
+      if (!fontIdsByLanguage.get(language)?.has(value)) danglingFonts.add(`${language}=${value}`);
+    }
+  });
+  if (danglingFonts.size) errors.push(`존재하지 않는 원본 글꼴 참조가 있습니다: ${[...danglingFonts].join(", ")}`);
   return errors;
 }
 
@@ -667,35 +685,83 @@ function removeEndnoteAutoNumbers(elements) {
   });
 }
 
-function restoreVisibleSolutionFormatting(sourceHeaderDocument, elements) {
-  const charProperties = findRefContainer(sourceHeaderDocument, "charProperties");
-  if (!charProperties) return;
-  const styles = directChildrenByName(charProperties, "charPr");
-  const byId = new Map(styles.map((style) => [style.getAttribute("id"), style]));
-  const isHiddenStyle = (style) => style
+function isHiddenCharStyle(style) {
+  return style
     && Number(style.getAttribute("height") || 0) <= 100
     && (style.getAttribute("textColor") || "").toUpperCase() === "#FFFFFF";
+}
+
+function charStyleSignature(style) {
+  const clone = style.cloneNode(true);
+  ["id", "height", "textColor"].forEach((attribute) => clone.removeAttribute(attribute));
+  return new XMLSerializer().serializeToString(clone);
+}
+
+function charStyleVisibilityMapper(headerDocument) {
+  const charProperties = findRefContainer(headerDocument, "charProperties");
+  if (!charProperties) return null;
+  const styles = directChildrenByName(charProperties, "charPr");
+  const byId = new Map(styles.map((style) => [style.getAttribute("id"), style]));
   const fallback = styles.find((style) => (
     style.getAttribute("height") === "900"
     && (style.getAttribute("textColor") || "#000000").toUpperCase() === "#000000"
-  )) || styles.find((style) => !isHiddenStyle(style));
-  if (!fallback) return;
+  )) || styles.find((style) => !isHiddenCharStyle(style));
+  if (!fallback) return null;
+  let next = nextNumericId(styles);
+  const mapped = new Map();
+
+  return {
+    visibleHeight: fallback.getAttribute("height") || "900",
+    styleId(sourceId, hidden) {
+      const source = byId.get(sourceId) || fallback;
+      if (hidden === isHiddenCharStyle(source)) return source.getAttribute("id");
+      const key = `${source.getAttribute("id")}:${hidden ? "hidden" : "visible"}`;
+      if (mapped.has(key)) return mapped.get(key);
+      const signature = charStyleSignature(source);
+      const existing = [...byId.values()].find((candidate) => (
+        hidden === isHiddenCharStyle(candidate)
+        && charStyleSignature(candidate) === signature
+      ));
+      if (existing) {
+        mapped.set(key, existing.getAttribute("id"));
+        return existing.getAttribute("id");
+      }
+      // Clone the run's own style so local fontRef values, emphasis, spacing,
+      // width ratio, and language-specific typefaces survive the paste.
+      const clone = headerDocument.importNode(source, true);
+      const newId = String(next++);
+      clone.setAttribute("id", newId);
+      clone.setAttribute("height", hidden ? "100" : fallback.getAttribute("height") || "900");
+      clone.setAttribute("textColor", hidden ? "#FFFFFF" : "#000000");
+      charProperties.appendChild(clone);
+      byId.set(newId, clone);
+      mapped.set(key, newId);
+      return newId;
+    },
+    finish() {
+      charProperties.setAttribute("itemCnt", String(directChildrenByName(charProperties, "charPr").length));
+    },
+  };
+}
+
+function restoreVisibleSolutionFormatting(sourceHeaderDocument, elements) {
+  const visibility = charStyleVisibilityMapper(sourceHeaderDocument);
+  if (!visibility) return;
 
   elements.forEach((element) => {
     descendants(element, "run").forEach((run) => {
-      if (isHiddenStyle(byId.get(run.getAttribute("charPrIDRef")))) {
-        run.setAttribute("charPrIDRef", fallback.getAttribute("id"));
-      }
+      run.setAttribute("charPrIDRef", visibility.styleId(run.getAttribute("charPrIDRef"), false));
     });
     descendants(element, "equation").forEach((equation) => {
       const isHiddenEquation = Number(equation.getAttribute("baseUnit") || 0) <= 100
         && (equation.getAttribute("textColor") || "").toUpperCase() === "#FFFFFF";
       if (isHiddenEquation) {
-        equation.setAttribute("baseUnit", fallback.getAttribute("height") || "900");
+        equation.setAttribute("baseUnit", visibility.visibleHeight);
         equation.setAttribute("textColor", "#000000");
       }
     });
   });
+  visibility.finish();
 }
 
 function clearSlotMarker(paragraph) {
@@ -746,25 +812,6 @@ function setQuestionPageBreak(elements, enabled) {
   if (firstParagraph) firstParagraph.setAttribute("pageBreak", enabled ? "1" : "0");
 }
 
-function ensureHiddenEndnoteStyle(headerDocument) {
-  const charProperties = findRefContainer(headerDocument, "charProperties");
-  if (!charProperties) throw new Error("미주 숨김용 글자 서식을 추가할 charProperties를 찾지 못했습니다.");
-  const styles = directChildrenByName(charProperties, "charPr");
-  const existing = styles.find((style) => (
-    style.getAttribute("height") === "100"
-    && (style.getAttribute("textColor") || "").toUpperCase() === "#FFFFFF"
-  ));
-  if (existing) return existing.getAttribute("id");
-  if (!styles.length) throw new Error("미주 숨김용 기준 글자 서식을 찾지 못했습니다.");
-  const clone = headerDocument.importNode(styles[0], true);
-  clone.setAttribute("id", String(nextNumericId(styles)));
-  clone.setAttribute("height", "100");
-  clone.setAttribute("textColor", "#FFFFFF");
-  charProperties.appendChild(clone);
-  charProperties.setAttribute("itemCnt", String(styles.length + 1));
-  return clone.getAttribute("id");
-}
-
 function compactHiddenEndnote(note) {
   const paragraphs = descendants(note, "p");
   const answer = paragraphs.find((paragraph) => textOf(paragraph).includes("[정답]")) || null;
@@ -790,7 +837,8 @@ function compactHiddenEndnote(note) {
 }
 
 function hideEndnoteFormatting(headerDocument, sectionDocuments, visibleMarkers = new Set()) {
-  const hiddenStyleId = ensureHiddenEndnoteStyle(headerDocument);
+  const visibility = charStyleVisibilityMapper(headerDocument);
+  if (!visibility) throw new Error("미주 숨김용 글자 서식을 추가할 charProperties를 찾지 못했습니다.");
   sectionDocuments.forEach((documentNode) => {
     descendants(documentNode.documentElement, "endNotePr").forEach((noteProperties) => {
       descendants(noteProperties, "noteLine").forEach((line) => {
@@ -807,14 +855,19 @@ function hideEndnoteFormatting(headerDocument, sectionDocuments, visibleMarkers 
       compactHiddenEndnote(note);
       let markerRun = note.parentElement;
       while (markerRun && localName(markerRun) !== "run") markerRun = markerRun.parentElement;
-      if (markerRun && !visibleMarkers.has(note)) markerRun.setAttribute("charPrIDRef", hiddenStyleId);
-      descendants(note, "run").forEach((run) => run.setAttribute("charPrIDRef", hiddenStyleId));
+      if (markerRun && !visibleMarkers.has(note)) {
+        markerRun.setAttribute("charPrIDRef", visibility.styleId(markerRun.getAttribute("charPrIDRef"), true));
+      }
+      descendants(note, "run").forEach((run) => {
+        run.setAttribute("charPrIDRef", visibility.styleId(run.getAttribute("charPrIDRef"), true));
+      });
       descendants(note, "equation").forEach((equation) => {
         equation.setAttribute("baseUnit", "100");
         equation.setAttribute("textColor", "#FFFFFF");
       });
     });
   });
+  visibility.finish();
 }
 
 function pruneUnusedBinaryItems(contentDocument, roots) {

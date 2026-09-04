@@ -10,11 +10,11 @@ const parse = (xml) => new DOMParser().parseFromString(xml, "application/xml");
 const xml = (node) => new XMLSerializer().serializeToString(node);
 const desc = (node, name) => [...node.getElementsByTagNameNS("*", name)];
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
-const run = (content) => `<hp:run charPrIDRef="0">${content}</hp:run>`;
+const run = (content, charPrIDRef = "0") => `<hp:run charPrIDRef="${charPrIDRef}">${content}</hp:run>`;
 const line = '<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="2400" textheight="2400" baseline="1700" spacing="900" horzpos="0" horzsize="24376" flags="393216"/></hp:linesegarray>';
 const p = (id, content) => `<hp:p id="${id}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0">${content}${line}</hp:p>`;
 const heading = (id, type) => p(id, run(`<hp:rect><hp:drawText><hp:subList>${p(id + 1, run(`<hp:t>${type}</hp:t>`))}</hp:subList></hp:drawText></hp:rect>`));
-const note = (id, number) => `<hp:ctrl><hp:endNote number="${number}" suffixChar="32"><hp:subList>${p(id, run(`<hp:ctrl><hp:autoNum num="${number}" numType="ENDNOTE"/></hp:ctrl><hp:t>풀이</hp:t><hp:equation><hp:script>x+1</hp:script></hp:equation>`))}</hp:subList></hp:endNote></hp:ctrl>`;
+const note = (id, number, charPrIDRef = "0") => `<hp:ctrl><hp:endNote number="${number}" suffixChar="32"><hp:subList>${p(id, run(`<hp:ctrl><hp:autoNum num="${number}" numType="ENDNOTE"/></hp:ctrl><hp:t>풀이</hp:t><hp:equation><hp:script>x+1</hp:script></hp:equation>`, charPrIDRef))}</hp:subList></hp:endNote></hp:ctrl>`;
 const sections = (content) => `<hs:sec xmlns:hs="${HS}" xmlns:hp="${HP}" xmlns:hc="${HC}">${content}</hs:sec>`;
 const bytes = (zip) => zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 const readSection = async (data) => parse(await (await JSZip.loadAsync(data)).file("Contents/section0.xml").async("string"));
@@ -42,6 +42,42 @@ async function addMasterPage(zip, label) {
     properties.append(reference);
     zip.file("Contents/section0.xml", xml(section));
   }
+}
+
+async function addLocalFontStyle(zip, face) {
+  const header = parse(await zip.file("Contents/header.xml").async("string"));
+  const fontIds = {};
+  for (const fontface of desc(header, "fontface")) {
+    const fonts = [...fontface.children].filter((node) => node.localName === "font");
+    const id = String(Math.max(-1, ...fonts.map((font) => Number(font.getAttribute("id")))) + 1);
+    const font = fonts[0].cloneNode(true);
+    font.setAttribute("id", id);
+    font.setAttribute("face", face);
+    font.setAttribute("isEmbedded", "0");
+    fontface.append(font);
+    fontface.setAttribute("fontCnt", String(fonts.length + 1));
+    fontIds[fontface.getAttribute("lang")] = id;
+  }
+  const charProperties = desc(header, "charProperties")[0];
+  const styles = [...charProperties.children].filter((node) => node.localName === "charPr");
+  const style = styles[0].cloneNode(true);
+  const styleId = String(Math.max(-1, ...styles.map((node) => Number(node.getAttribute("id")))) + 1);
+  style.setAttribute("id", styleId);
+  const fontRef = desc(style, "fontRef")[0];
+  const attributes = { HANGUL: "hangul", LATIN: "latin", HANJA: "hanja", JAPANESE: "japanese", OTHER: "other", SYMBOL: "symbol", USER: "user" };
+  Object.entries(attributes).forEach(([lang, attribute]) => fontRef.setAttribute(attribute, fontIds[lang]));
+  charProperties.append(style);
+  charProperties.setAttribute("itemCnt", String(styles.length + 1));
+  zip.file("Contents/header.xml", xml(header));
+  return styleId;
+}
+
+function hangulFontFace(header, runNode) {
+  const styleId = runNode.getAttribute("charPrIDRef");
+  const style = desc(header, "charPr").find((node) => node.getAttribute("id") === styleId);
+  const fontId = desc(style, "fontRef")[0]?.getAttribute("hangul");
+  const hangul = desc(header, "fontface").find((node) => node.getAttribute("lang") === "HANGUL");
+  return desc(hangul, "font").find((node) => node.getAttribute("id") === fontId)?.getAttribute("face");
 }
 
 const rectangle = (id, label, width = 30000) => `<hp:rect id="${id}" groupLevel="0">
@@ -141,14 +177,15 @@ document.querySelector("#run").addEventListener("click", async () => {
   try {
     const template = new Uint8Array(await (await fetch("/templates/basic-math-exam.hwpx")).arrayBuffer());
     const source = await JSZip.loadAsync(template);
+    const localStyleId = await addLocalFontStyle(source, "로컬테스트체");
     source.file("Contents/section0.xml", sections(
       p(1, run("<hp:t>기본편 · 표지</hp:t>"))
       + heading(10, "약술법")
-      + p(20, run(note(21, 7)) + run("<hp:t>첫 문제</hp:t>"))
+      + p(20, run(note(21, 7, localStyleId)) + run("<hp:t>첫 문제</hp:t>", localStyleId))
       + p(22, run("<hp:line><hp:shapeComment>조건 도형</hp:shapeComment></hp:line>"))
       + heading(30, "연습문제")
-      + p(40, run(note(41, 12)) + run("<hp:t>[26009-0001]</hp:t>"))
-      + p(42, run("<hp:t>뒤 문단의 문제</hp:t>")),
+      + p(40, run(note(41, 12, localStyleId)) + run("<hp:t>[26009-0001]</hp:t>", localStyleId))
+      + p(42, run("<hp:t>뒤 문단의 문제</hp:t>", localStyleId)),
     ));
     await addMasterPage(source, "원본 배경");
     const prepared = await prepareSuteukShortEssayHwpx(new File([await bytes(source)], "27약술 수능특강 수학1 _ 01 검증.hwpx"));
@@ -160,6 +197,7 @@ document.querySelector("#run").addEventListener("click", async () => {
     const selected = [questions[1], questions[0]];
     const output = await buildExamFromSourcesHwpx(inputs, template, selected, { useDefaultLayout: true });
     const outputZip = await JSZip.loadAsync(output);
+    const outputHeader = parse(await outputZip.file("Contents/header.xml").async("string"));
     assert(!Object.keys(outputZip.files).some((path) => /masterpage|master-image/.test(path)), "원본 바탕쪽이 따라옴");
     const root = await readSection(output);
     const notes = desc(root, "endNote");
@@ -170,6 +208,10 @@ document.querySelector("#run").addEventListener("click", async () => {
     assert([...root.documentElement.children].filter((p) => desc(p, "endNote").length)
       .every((p) => [...p.children].some((n) => n.localName === "linesegarray")), "문제 줄 배치 유실");
     assert(!desc(root, "t").some((t) => /^\d+\. $/.test(t.textContent)), "문항 번호 중복");
+    const localFontRuns = desc(root, "run").filter((runNode) => (
+      desc(runNode, "t").some((node) => /첫 문제|뒤 문단의 문제/.test(node.textContent || ""))
+    ));
+    assert(localFontRuns.length === 2 && localFontRuns.every((runNode) => hangulFontFace(outputHeader, runNode) === "로컬테스트체"), "원본 로컬 글꼴 유실");
     await validateGeneratedExamHwpx(output, { expectedQuestionCount: 2, preserveOriginalContent: true });
     const sparse = await JSZip.loadAsync(output);
     const sparseHeader = parse(await sparse.file("Contents/header.xml").async("string"));
@@ -211,7 +253,7 @@ document.querySelector("#run").addEventListener("click", async () => {
       assert(imageItem && zip.file(imageItem.getAttribute("href")), "템플릿 바탕쪽 이미지 참조 유실");
     }
     await testTemplateWidths(template);
-    result.textContent = "PASS · 분류 / 코드 전용 문단 / 도형 보존 / 미주·수식·줄 배치 / 재번호 / 문제지 답 숨김 / 원본 배경 제외 / 템플릿 배경·이미지 보존 / 서식 ID 연속화 / 1·2단 너비 / 병합 셀 / 중첩 슬롯 / 작은 표식 보존 / 너비 보정 재실행";
+    result.textContent = "PASS · 분류 / 코드 전용 문단 / 도형 보존 / 원본 로컬 글꼴 / 미주·수식·줄 배치 / 재번호 / 문제지 답 숨김 / 원본 배경 제외 / 템플릿 배경·이미지 보존 / 서식 ID 연속화 / 1·2단 너비 / 병합 셀 / 중첩 슬롯 / 작은 표식 보존 / 너비 보정 재실행";
   } catch (error) {
     result.textContent = `FAIL · ${error.stack}`;
   }
