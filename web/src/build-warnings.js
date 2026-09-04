@@ -23,7 +23,7 @@ export function collectSelectedBuildWarnings(exams, questionByCode, ruleId) {
       const warnings = warningLabels(question);
       if (!warnings.length) return;
       records.push({
-        examTitle: nonempty(exam.title) || `시험지 ${String(examIndex + 1).padStart(2, "0")}`,
+        examTitle: nonempty(exam.title) || `시험지${String(examIndex + 1).padStart(2, "0")}`,
         code,
         warnings,
       });
