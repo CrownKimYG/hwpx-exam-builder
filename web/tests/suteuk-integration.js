@@ -94,7 +94,9 @@ async function testTemplateWidths(template) {
     const controls = '<hp:secPr><hp:pagePr width="60000" height="84000" gutterType="LEFT_ONLY"><hp:margin left="5000" right="5000" gutter="1000"/></hp:pagePr></hp:secPr>'
       + `<hp:ctrl><hp:colPr colCount="${layout.columns}" sameSz="1" sameGap="2000"/></hp:ctrl>`;
     const slot = layout.nested
-      ? p(1, run(controls)) + p(2, run("<hp:t>슬롯 표</hp:t>" + table(200, 18000, 1, [cell(0, 1, 18000, p(3, run("<hp:t>#1</hp:t>")))], 2000, 0)))
+      // The supplied template has no text in this outer paragraph. Its only
+      // text is the #N marker inside the nested one-cell slot table.
+      ? p(1, run(controls)) + p(2, run(table(200, 18000, 1, [cell(0, 1, 18000, p(3, run("<hp:t>#1</hp:t>")))], 2000, 0)))
       : p(1, run(controls + "<hp:t>#1</hp:t>"));
     custom.file("Contents/section0.xml", sections(slot));
     for (const output of [
@@ -119,7 +121,11 @@ async function testTemplateWidths(template) {
       assert(width(grid) === layout.expected - 500 && widths[0] + widths[1] + widths[2] === width(grid), "표/셀 전체 너비 불일치");
       assert(widths[3] === widths[0] + widths[1] && widths[3] + widths[4] === width(grid), "병합 셀 경계 불일치");
       assert(width(byId("rect", 611)) === widths[0] - 1200, "셀 내부 여백 미반영");
-      if (layout.nested) assert(width(byId("tbl", 200)) === 18000, "템플릿 자체 표 변경");
+      if (layout.nested) {
+        const slotTable = byId("tbl", 200);
+        assert(slotTable && width(slotTable) === 18000, "중첩 슬롯 표 유실 또는 변경");
+        assert(desc(slotTable, "p").some((paragraph) => paragraph.getAttribute("id") === "420"), "문제가 슬롯 표 밖에 삽입됨");
+      }
       assert(desc(root, "pagePr").length === 1 && desc(root, "colPr").length === 1, "슬롯 문단의 용지/단 설정 유실");
       const before = xml(root);
       const header = parse(await (await JSZip.loadAsync(output)).file("Contents/header.xml").async("string"));

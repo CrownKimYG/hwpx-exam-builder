@@ -6,8 +6,25 @@ import {
   choiceSymbolFromShapeComment,
   hasCompleteChoiceSet,
   isQuestionNumberCandidateText,
+  ownParagraphText,
   rewriteEssayPromptText,
 } from "./template-builder.js";
+
+test("중첩 표의 슬롯 표식은 실제 안쪽 문단만 소유한다", () => {
+  const outer = { localName: "p" };
+  const outerRun = { localName: "run", parentElement: outer };
+  const table = { localName: "tbl", parentElement: outerRun };
+  const cell = { localName: "tc", parentElement: table };
+  const subList = { localName: "subList", parentElement: cell };
+  const inner = { localName: "p", parentElement: subList };
+  const innerRun = { localName: "run", parentElement: inner };
+  const marker = { localName: "t", parentElement: innerRun, textContent: "#1" };
+  outer.getElementsByTagNameNS = () => [marker];
+  inner.getElementsByTagNameNS = () => [marker];
+
+  assert.equal(ownParagraphText(outer), "");
+  assert.equal(ownParagraphText(inner), "#1");
+});
 
 test("미주 정답에서 객관식 번호를 직접 찾는다", () => {
   assert.equal(answerChoiceSymbolFromText("[정답] ④"), "④");

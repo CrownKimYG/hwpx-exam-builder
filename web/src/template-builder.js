@@ -27,6 +27,18 @@ function textOf(element) {
   return descendants(element, "t").map((node) => node.textContent || "").join("").trim();
 }
 
+export function ownParagraphText(paragraph) {
+  return descendants(paragraph, "t")
+    .filter((textNode) => {
+      let owner = textNode.parentElement;
+      while (owner && localName(owner) !== "p") owner = owner.parentElement;
+      return owner === paragraph;
+    })
+    .map((node) => node.textContent || "")
+    .join("")
+    .trim();
+}
+
 export function answerChoiceSymbolFromText(value) {
   const answer = String(value || "").match(/\[정답\]([\s\S]*)/)?.[1] || "";
   const symbol = answer.match(/[①②③④⑤]/)?.[0];
@@ -51,7 +63,7 @@ export function choiceSymbolFromShapeComment(comment, width, height) {
 
 function paragraphSlot(paragraph) {
   if (localName(paragraph) !== "p") return null;
-  const match = textOf(paragraph).match(SLOT_RE);
+  const match = ownParagraphText(paragraph).match(SLOT_RE);
   if (!match) return null;
   let tableDepth = 0;
   let ancestor = paragraph.parentElement;
@@ -69,11 +81,11 @@ function findSlots(root) {
 }
 
 function findSequentialMarkers(root) {
-  return descendants(root, "p").filter((paragraph) => textOf(paragraph) === SEQUENTIAL_MARKER);
+  return descendants(root, "p").filter((paragraph) => ownParagraphText(paragraph) === SEQUENTIAL_MARKER);
 }
 
 function findExplanationMarkers(root) {
-  return descendants(root, "p").filter((paragraph) => textOf(paragraph) === EXPLANATION_MARKER);
+  return descendants(root, "p").filter((paragraph) => ownParagraphText(paragraph) === EXPLANATION_MARKER);
 }
 
 function canonicalSlots(records) {
