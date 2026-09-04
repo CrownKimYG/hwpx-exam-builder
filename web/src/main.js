@@ -79,6 +79,7 @@ import {
   renumberEndnotesHwpx,
 } from "./hwpx-output.js";
 import { collectSelectedBuildWarnings } from "./build-warnings.js";
+import { numberedExamTitle } from "./exam-naming.js";
 
 const DEFAULT_TEMPLATE_URL = "./templates/basic-math-exam.hwpx";
 const FIELD_LABELS = {
@@ -96,7 +97,7 @@ const elements = Object.fromEntries([
   "metric-files", "metric-total", "metric-units", "metric-unclassified", "bank-attention", "bank-attention-text", "bank-manager",
   "bank-file-rows", "question-metadata",
   "preview-file", "previous-page", "next-page", "page-label", "page-stage", "page-canvas", "page-loading",
-  "zoom-out", "zoom-fit", "zoom-in", "zoom-label", "toggle-quick", "quick-body", "quick-question-count-label", "quick-question-count",
+  "zoom-out", "zoom-fit", "zoom-in", "zoom-label", "toggle-quick", "quick-body", "quick-exam-name", "quick-question-count-label", "quick-question-count",
   "quick-exam-count", "quick-seed", "matrix-wrap", "quick-status", "quick-generate", "add-exam",
     "clear-exams", "exam-list", "template-file", "template-file-name", "output-type",
     "question-format", "show-subject-title", "save-handoff", "build-exams", "template-fields", "field-grid", "build-status", "cancel-build",
@@ -108,6 +109,7 @@ const state = {
   questions: [],
   exams: [],
   quick: {
+    examName: "시험지",
     questionCount: 8,
     examCount: 1,
     seed: `seed-${new Date().toISOString().slice(0, 16).replace(/[-T:]/g, "")}`,
@@ -1243,7 +1245,7 @@ function quickGenerate() {
       });
       renderExamDrafts();
     } else {
-      exams.forEach((codes) => addExam(codes));
+      exams.forEach((codes) => addExam(codes, { baseName: elements.quickExamName.value }));
     }
     state.quick.seed = seed;
     elements.quickStatus.className = "quick-status";
@@ -1255,12 +1257,12 @@ function quickGenerate() {
   }
 }
 
-function addExam(codes = [], { title = "" } = {}) {
+function addExam(codes = [], { title = "", baseName = "시험지" } = {}) {
   if (state.handoffExams.length) return;
   const sequence = state.nextExamId++;
   state.exams.push({
     id: `exam-${sequence}`,
-    title: title || `시험지 ${String(sequence).padStart(2, "0")}`,
+    title: title || numberedExamTitle(baseName, sequence),
     codesText: Array.isArray(codes) ? codes.join(" ") : String(codes || ""),
   });
   renderExamDrafts();
@@ -1845,7 +1847,8 @@ function bindEvents() {
     elements.toggleQuick.textContent = hidden ? "펼치기" : "접기";
     elements.toggleQuick.setAttribute("aria-expanded", String(!hidden));
   });
-  [elements.quickQuestionCount, elements.quickExamCount, elements.quickSeed].forEach((input) => input.addEventListener("input", () => {
+  [elements.quickExamName, elements.quickQuestionCount, elements.quickExamCount, elements.quickSeed].forEach((input) => input.addEventListener("input", () => {
+    state.quick.examName = elements.quickExamName.value;
     state.quick.questionCount = Number(elements.quickQuestionCount.value);
     state.quick.examCount = Number(elements.quickExamCount.value);
     state.quick.seed = elements.quickSeed.value;
@@ -1875,6 +1878,7 @@ elements.bankProfileRule.replaceChildren(...CONCRETE_BANK_RULES.map((rule) => (
   createElement("option", { text: rule.label, attributes: { value: rule.id } })
 )));
 elements.quickSeed.value = state.quick.seed;
+elements.quickExamName.value = state.quick.examName;
 elements.outputType.value = state.settings.outputType;
 elements.questionFormat.value = state.settings.questionFormat;
 syncSettingsFromControls();
