@@ -1,3 +1,4 @@
+import { GRADED_ESSAY_RULE_ID } from "./graded-essay-parser.js";
 import JSZip from "jszip";
 import { normalizeEquationScript } from "./parser.js";
 import { SUTEUK_SHORT_ESSAY_PREPROCESS_MODE } from "./suteuk-short-essay-parser.js";
@@ -1541,7 +1542,7 @@ function removeChoiceParagraphs(clones, paragraphs) {
 }
 
 function transformMacroQuestionClones(clones, question, targetDocument, transformMode) {
-  if (transformMode === "original" || isSuteukQuestion(question)) return;
+  if (transformMode === "original" || isSuteukQuestion(question) || question.preprocessMode === GRADED_ESSAY_RULE_ID) return;
   const identity = question.code || question.sourceLabel || question.ordinal;
   const answer = answerParagraph(clones);
   const answerSymbol = answerChoiceSymbolFromText(answer ? textOf(answer) : "")

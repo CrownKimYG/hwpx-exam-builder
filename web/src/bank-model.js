@@ -17,6 +17,11 @@ export function difficultyFromLabel(label) {
 
 export function parseBankFilename(filename) {
   const normalized = normalizeKorean(filename);
+  const gradedEssay = normalized.match(/^서술형_(\d+)문항_미주해설(?:_[^/]+)?\.hwpx$/u);
+  if (gradedEssay) {
+    return { subject: "수학", unitNumber: "", unitName: "서술형 통합", volume: "",
+      declaredQuestionCount: Number(gradedEssay[1]), parsed: true };
+  }
   const suteuk = normalized.match(SUTEUK_SHORT_ESSAY_FILENAME_RE);
   if (suteuk) {
     return {

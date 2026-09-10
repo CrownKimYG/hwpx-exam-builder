@@ -13,23 +13,26 @@
       <header class="hero">
         <div class="hero-title">
           <h1><button class="app-home" id="app-home" type="button">시험지 제작실</button></h1>
-          <span class="bank-title-separator hidden" id="bank-title-separator">&gt;</span>
+          <span class="bank-title-separator hidden" id="bank-title-separator">/</span>
           <div class="bank-profile-summary hidden" id="bank-profile-summary">
             <button id="active-bank-name" type="button" aria-label="문제은행 이름 변경"></button>
           </div>
         </div>
         <div class="hero-bank-tools" id="hero-bank-tools"></div>
+        <span id="workspace-save-status" class="workspace-save-status" role="status"></span>
       </header>
 
       <section class="upload-card" id="upload-card">
         <div class="file-drop" id="bank-drop">
-          <strong>새로운 문제은행 추가</strong>
-          <div class="upload-actions" id="upload-actions">
+          <strong>새 문제은행 등록</strong><p class="upload-help">HWP · HWPX를 끌어 놓으세요. 이 브라우저에 저장됩니다.</p>
+          <details class="import-menu" id="import-menu"><summary>파일 추가 · 가져오기</summary><div class="upload-actions" id="upload-actions">
             <label class="button folder-select-button" for="folder-input">폴더 선택</label>
-            <label class="button" for="files-input">HWP/HWPX 파일 추가</label>
-            <label class="button" for="handoff-input">이어 만들기</label>
-          </div>
+            <label class="button" for="files-input">현재 은행에 파일 추가</label>
+            <label class="button" for="new-bank-input">＋ 문제은행 추가</label>
+            <label class="button" for="handoff-input">작업 파일 가져오기</label>
+          </div></details>
           <input id="folder-input" type="file" accept=".hwp,.hwpx" webkitdirectory directory multiple />
+          <input id="new-bank-input" type="file" accept=".hwp,.hwpx" multiple />
           <input id="files-input" type="file" accept=".hwp,.hwpx,application/x-hwp,application/zip" multiple />
           <input id="handoff-input" type="file" accept=".hwpx,.zip,application/zip" multiple />
         </div>
@@ -37,23 +40,20 @@
       </section>
 
       <section class="bank-home" id="bank-home" aria-labelledby="bank-home-title">
-        <h2 id="bank-home-title">문제은행 목록</h2>
+        <div class="home-heading"><div><h2 id="bank-home-title">내 문제은행</h2><p>선택한 은행으로 시험지를 만드세요.</p></div>
+          <button id="resume-workspace" class="hidden" type="button">이전 작업 이어가기</button></div>
+        <div class="home-actions"><button id="open-selected-banks" type="button" disabled>선택한 은행으로 출제</button></div>
         <div class="bank-home-table-wrap">
           <table class="bank-home-table">
-            <thead><tr><th>이름</th><th>처리 방식</th><th>파일</th><th>문항</th><th>단원</th><th>미분류</th><th></th></tr></thead>
+            <thead><tr><th>선택</th><th>이름</th><th>문항</th><th>관리</th></tr></thead>
             <tbody id="bank-home-rows"></tbody>
           </table>
         </div>
-        <p class="saved-bank-empty hidden" id="bank-home-empty">저장된 문제은행이 없습니다.</p>
+        <p class="saved-bank-empty hidden" id="bank-home-empty">아직 등록된 은행이 없습니다. 위에서 파일이나 폴더를 한 번 등록하면 다음부터 여기에서 바로 출제할 수 있습니다.</p>
       </section>
 
       <section class="workspace hidden" id="workspace">
-        <div class="metrics" aria-label="문제은행 정보">
-          <span>파일 <strong id="metric-files">0</strong></span>
-          <span>문항 <strong id="metric-total">0</strong></span>
-          <span>단원 <strong id="metric-units">0</strong></span>
-          <span>미분류 <strong id="metric-unclassified">0</strong></span>
-        </div>
+
 
         <button class="bank-attention hidden" id="bank-attention" type="button">
           <span id="bank-attention-text"></span>
@@ -61,7 +61,18 @@
         </button>
 
         <details class="bank-manager" id="bank-manager">
-          <summary>문제은행 정보 수정</summary>
+          <summary>문제은행 관리</summary>
+        <div class="metrics" aria-label="문제은행 정보">
+          <span>파일 <strong id="metric-files">0</strong></span>
+          <span>문항 <strong id="metric-total">0</strong></span>
+          <span>단원 <strong id="metric-units">0</strong></span>
+          <span>미분류 <strong id="metric-unclassified">0</strong></span>
+        </div>
+          <div id="bank-import-tools"></div>
+          <div class="bank-selection bank-management-selects">
+            <label>파일을 추가할 은행<select id="active-bank-select" aria-label="현재 문제은행"></select></label>
+            <label>저장된 은행 연결<select id="saved-bank-select" aria-label="저장된 문제은행 추가"><option value="">문제은행 선택</option></select></label>
+          </div>
           <div class="bank-table-wrap">
             <table class="bank-table">
               <thead><tr><th>코드</th><th>파일</th><th>처리 방식</th><th>과목</th><th>단원</th><th>난이도별 문항</th><th>상태</th><th></th></tr></thead>
@@ -101,28 +112,55 @@
           <aside class="builder-panel" aria-labelledby="builder-title">
             <section class="quick-card">
               <div class="section-heading">
-                <h2 id="builder-title">빠른 출제</h2>
+                <h2 id="builder-title">출제 구성</h2>
                 <button id="toggle-quick" type="button" aria-expanded="true">접기</button>
               </div>
               <div id="quick-body">
-                <div class="quick-settings">
-                  <label>시험지 기본 이름<input id="quick-exam-name" type="text" value="시험지" maxlength="80" /></label>
-                  <label><span id="quick-question-count-label">시험지당 문항 수</span><input id="quick-question-count" type="number" min="1" max="100" value="8" /></label>
-                  <label>생성할 시험지 수<input id="quick-exam-count" type="number" min="1" value="1" /></label>
-                  <label>랜덤 시드<input id="quick-seed" type="text" /></label>
+                <div class="preset-picker">
+                  <select id="exam-preset" aria-label="출제 템플릿"><option value="">출제 템플릿 선택</option></select>
+                  <button id="apply-exam-preset" type="button" disabled>적용</button>
+                  <details class="preset-manage"><summary>저장 · 관리</summary>
+                    <div class="preset-manage-body">
+                      <label>템플릿 이름<input id="exam-preset-name" type="text" maxlength="80" placeholder="예: 중간고사 20문항" /></label>
+                      <p>은행 순서·문항 수·문항 번호별 단원과 난이도·시험지 이름과 부수를 저장합니다. 추첨 시드는 유지됩니다.</p>
+                      <button id="save-exam-preset" type="button">현재 조건을 새로 저장</button>
+                      <button id="update-exam-preset" type="button" disabled>선택 템플릿 덮어쓰기</button>
+                      <button id="delete-exam-preset" type="button" disabled>선택 템플릿 삭제</button>
+                    </div>
+                  </details>
                 </div>
+                <p id="exam-preset-status" class="preset-status" role="status"></p>
+                <div class="bank-selection">
+                  <label>출제 방식<select id="quick-mode"><option value="banks">문제은행별 문항 수</option><option value="matrix">문제은행별 단원·난이도 조건표</option></select></label>
+                </div>
+                <details class="exam-settings"><summary>시험지 설정</summary><div class="quick-settings">
+                  <label>시험지 이름<input id="quick-exam-name" type="text" value="시험지" maxlength="80" /></label>
+                  <label><span id="quick-question-count-label">시험지당 문항 수</span><input id="quick-question-count" type="number" min="1" max="100" value="8" /></label>
+                  <label>시험지 수<input id="quick-exam-count" type="number" min="1" value="1" /></label>
+                  <details class="advanced-settings"><summary>추첨 설정</summary><label>같은 결과 재현용 시드<input id="quick-seed" type="text" /></label></details>
+                </div>
+                </details>
+                <p class="section-caption" title="0문항인 은행은 출제에서 제외됩니다.">은행별 문항 수</p>
+                <div id="bank-quotas" class="bank-quotas"></div>
+                <div id="matrix-tabs" class="matrix-tabs" role="tablist" aria-label="은행별 출제 조건"></div>
                 <div class="matrix-wrap" id="matrix-wrap"></div>
-                <p class="quick-status" id="quick-status"></p>
-                <button class="primary wide" id="quick-generate" type="button" disabled>빠른 출제 결과 추가</button>
+                <details class="history-options"><summary>중복 관리 · 출제 이력</summary>
+                  <label><input id="exclude-history" type="checkbox" checked />이전에 출제한 문항 제외</label>
+                  <p id="history-summary"></p>
+                  <p>자동 출제 시 기록하며 목록을 비워도 유지됩니다. 직접 입력·수정한 문항은 다운로드 시 기록합니다. 같은 은행의 파일 경로와 원문 문항 번호로 구분합니다.</p>
+                  <button id="clear-history" type="button">출제 이력 초기화</button>
+                </details>
+                <div class="quick-actions"><p class="quick-status" id="quick-status" aria-live="polite"></p>
+                <button class="primary wide" id="quick-generate" type="button" disabled>조건대로 시험지 추가</button></div>
               </div>
             </section>
 
             <section class="exam-list-card">
               <div class="section-heading">
-                <h2>시험지 출제 목록</h2>
+                <h2>시험지 <span id="exam-count-badge" class="count-badge">0</span></h2>
                 <div class="inline-actions">
-                  <button id="add-exam" type="button">＋ 시험지</button>
-                  <button id="clear-exams" type="button">전체 비우기</button>
+                  <button id="add-exam" type="button">직접 입력</button>
+                  <button id="clear-exams" type="button">비우기</button><button id="undo-exams" class="hidden" type="button">되돌리기</button>
                 </div>
               </div>
               <div class="exam-list" id="exam-list"></div>
@@ -164,29 +202,15 @@
 
     <footer class="generation-bar hidden" id="generation-bar">
       <div class="generation-inner">
-        <div class="template-control">
-          <label class="button" for="template-file">템플릿 선택</label>
-          <input id="template-file" type="file" accept=".hwpx,application/zip" />
-          <span id="template-file-name">기본 템플릿</span>
-        </div>
-        <label>출력 종류
-          <select id="output-type">
-            <option value="problem">문제지</option>
-            <option value="solution">문제지(해설 포함)</option>
-            <option value="both">문제지, 해설지 따로</option>
-          </select>
-        </label>
-        <label>문항 형식
-          <select id="question-format">
-            <option value="original">원본</option>
-            <option value="short">주관식</option>
-            <option value="essay">서술형</option>
-          </select>
-        </label>
-        <label class="check-control"><input id="show-subject-title" type="checkbox" />과목 제목</label>
-        <label class="button" for="handoff-input">인계 파일 불러오기</label>
-        <button id="save-handoff" type="button" disabled>인계용 HWPX 저장</button>
-        <button class="primary generate" id="build-exams" type="button" disabled>최종 시험지 생성</button>
+        <div class="download-summary"><strong id="download-summary">시험지를 구성해 주세요</strong></div>
+        <label>다운로드 형식<select id="output-type"><option value="problem">문제지</option><option value="solution">문제지 + 해설 포함</option><option value="both">문제지 · 해설지 각각</option></select></label>
+        <details class="output-options"><summary>출력 설정</summary><div class="output-options-body">
+          <div class="template-control"><label class="button" for="template-file">템플릿 선택</label><input id="template-file" type="file" accept=".hwpx,application/zip" /><span id="template-file-name">기본 템플릿</span></div>
+          <label>문항 형식<select id="question-format"><option value="original">원본</option><option value="short">주관식</option><option value="essay">서술형</option></select></label>
+          <label class="check-control"><input id="show-subject-title" type="checkbox" />과목 제목 표시</label>
+          <button id="save-handoff" type="button" disabled>다른 과목 담당자에게 인계용 저장</button>
+        </div></details>
+        <button class="primary generate" id="build-exams" type="button" disabled>HWPX 다운로드</button>
       </div>
       <details class="template-fields hidden" id="template-fields">
         <summary>템플릿 누름틀 공통값</summary>

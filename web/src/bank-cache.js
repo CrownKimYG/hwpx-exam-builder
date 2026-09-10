@@ -87,7 +87,7 @@ export async function getCachedFileAnalysis(bankId, identity, ruleId = DEFAULT_B
   return result || null;
 }
 
-export async function saveCachedFileAnalysis({ bankId, identity, ruleId = DEFAULT_BANK_RULE_ID, analysis, normalizedBytes = null }) {
+export async function saveCachedFileAnalysis({ bankId, identity, ruleId = DEFAULT_BANK_RULE_ID, analysis, normalizedBytes = null, sourceSnapshot = null }) {
   const database = await openDatabase();
   if (!database || !analysis) return null;
   const record = {
@@ -97,6 +97,7 @@ export async function saveCachedFileAnalysis({ bankId, identity, ruleId = DEFAUL
     ruleId,
     analysis,
     normalizedBytes: normalizedBytes ? Uint8Array.from(normalizedBytes).buffer : null,
+    sourceSnapshot,
     savedAt: new Date().toISOString(),
   };
   const transaction = database.transaction(FILE_STORE, "readwrite");
@@ -222,4 +223,24 @@ export async function requestPersistentBankCache() {
   } catch {
     return false;
   }
+}
+
+// Workspace assets have no bankId and are excluded from bank indexes.
+export async function saveWorkspaceTemplate(template) {
+  const database = await openDatabase();
+  if (!database) throw new Error("브라우저 저장소를 사용할 수 없습니다.");
+  const transaction = database.transaction(FILE_STORE, "readwrite");
+  const done = transactionDone(transaction);
+  transaction.objectStore(FILE_STORE).put({ cacheKey: "__workspace_template__", template });
+  await done;
+}
+
+export async function readWorkspaceTemplate() {
+  const database = await openDatabase();
+  if (!database) return null;
+  const transaction = database.transaction(FILE_STORE, "readonly");
+  const done = transactionDone(transaction);
+  const record = await requestResult(transaction.objectStore(FILE_STORE).get("__workspace_template__"));
+  await done;
+  return record?.template || null;
 }

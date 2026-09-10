@@ -72,9 +72,43 @@ export function compileSlotRules(cells, questionCount) {
 
 export function questionMatches(question, predicates) {
   return predicates.some((predicate) => (
+    (!predicate.bankId || predicate.bankId === question.bankId)
+    &&
     (!predicate.unitKey || predicate.unitKey === question.unitKey)
     && (!predicate.difficulty || predicate.difficulty === question.difficulty)
   ));
+}
+
+export function compileBankQuotaRules(quotas) {
+  const rules = new Map();
+  const seen = new Set();
+  for (const { bankId, count, name = bankId } of quotas) {
+    if (!bankId || seen.has(bankId)) throw new Error("문제은행이 중복되었거나 식별자가 없습니다.");
+    seen.add(bankId);
+    if (!Number.isInteger(count) || count < 0 || count > 100) throw new Error(`${name} 문항 수를 0~100 사이의 정수로 입력하세요.`);
+    for (let i = 0; i < count; i += 1) rules.set(rules.size + 1, [{ bankId }]);
+  }
+  if (!rules.size || rules.size > 100) throw new Error("문제은행별 문항 수의 합계를 1~100 사이로 설정하세요.");
+  return rules;
+}
+
+export function compileBankMatrixRules(banks) {
+  // Validate counts and identities before composing each bank's local slots.
+  compileBankQuotaRules(banks);
+  const combined = new Map();
+  for (const { bankId, count, name = bankId, cells = [] } of banks) {
+    if (count === 0) continue;
+    let local;
+    try {
+      local = compileSlotRules(cells, count);
+    } catch (error) {
+      throw new Error(`${name}: ${error.message}`);
+    }
+    for (const predicates of local.values()) {
+      combined.set(combined.size + 1, predicates.map((predicate) => ({ ...predicate, bankId })));
+    }
+  }
+  return combined;
 }
 
 function candidateMap(questions, rules, examCount, usedCodes, random) {

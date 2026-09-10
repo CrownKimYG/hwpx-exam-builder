@@ -45,7 +45,6 @@ def test_web_uses_multi_bank_exam_workspace() -> None:
     assert "문항 미리보기" not in html
     assert "webkitGetAsEntry" in main_js
     assert "Shift+↑/↓" not in html
-    assert "예: 01-003" not in main_js
     assert "브라우저에서만 처리" not in html
     assert "원본 그대로 복사해 시험지를 조립합니다" not in html
     assert "폴더를 끌어놓거나" not in html
@@ -57,7 +56,7 @@ def test_web_uses_multi_bank_exam_workspace() -> None:
     assert 'id="bank-list-button"' not in html
     assert 'id="quick-question-count-label"' in html
     assert 'id="build-warning-dialog"' in html
-    assert "최종 시험지 생성" in html
+    assert "HWPX 다운로드" in html
     assert "basic-math-exam.hwpx" in main_js
     assert 'id="save-project"' not in html
     assert 'id="project-file"' not in html

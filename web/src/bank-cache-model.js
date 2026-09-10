@@ -1,3 +1,4 @@
+import { GRADED_ESSAY_RULE_ID, isGradedEssayFilename } from "./graded-essay-parser.js";
 import {
   isEbsiKoreanBankFilename,
   isSuteukShortEssayBankFilename,
@@ -18,6 +19,11 @@ export const BANK_RULES = Object.freeze([
     id: AUTO_BANK_RULE_ID,
     label: "자동",
     description: "파일 구조를 확인해 사용할 처리 방식을 선택합니다.",
+  }),
+  Object.freeze({
+    id: GRADED_ESSAY_RULE_ID,
+    label: "[수학] 서술형·채점표",
+    description: "단원·유형·상중하 난이도를 읽고 해설·10점 채점표 미주를 보존합니다.",
   }),
   Object.freeze({
     id: DEFAULT_BANK_RULE_ID,
@@ -42,13 +48,14 @@ export const CONCRETE_BANK_RULES = Object.freeze(
 
 export function bankSubjectForRule(ruleId) {
   if (ruleId === EBSI_KOREAN_RULE_ID) return "국어";
-  if ([DEFAULT_BANK_RULE_ID, SUTEUK_SHORT_ESSAY_RULE_ID].includes(ruleId)) return "수학";
+  if ([DEFAULT_BANK_RULE_ID, SUTEUK_SHORT_ESSAY_RULE_ID, GRADED_ESSAY_RULE_ID].includes(ruleId)) return "수학";
   return "";
 }
 
 export function detectBankRuleFromFilenames(files) {
   const detected = new Set([...files].map((file) => (
-    isEbsiKoreanBankFilename(file.name) ? EBSI_KOREAN_RULE_ID
+    isGradedEssayFilename(file.name) ? GRADED_ESSAY_RULE_ID
+      : isEbsiKoreanBankFilename(file.name) ? EBSI_KOREAN_RULE_ID
       : isSuteukShortEssayBankFilename(file.name) ? SUTEUK_SHORT_ESSAY_RULE_ID : DEFAULT_BANK_RULE_ID
   )));
   if (detected.size > 1) {
@@ -75,10 +82,12 @@ export function preferHwpxDuplicates(files) {
 }
 
 const QUESTION_CACHE_FIELDS = Object.freeze([
+  "subject", "unitNumber", "unitName", "points", "rubric",
   "ordinal",
   "sourceLabel",
   "sourceType",
   "sourceNumber",
+  "sourceNumberLabel",
   "subtopic",
   "subtopicSource",
   "sourceCodes",
@@ -242,6 +251,7 @@ export function inferProfileRuleId(profile) {
   const savedRules = Object.values(profile?.fileSettings || {})
     .map((setting) => setting.resolvedRuleId || setting.selectedRuleId)
     .filter((ruleId) => CONCRETE_BANK_RULES.some((rule) => rule.id === ruleId));
+  if (savedRules.includes(GRADED_ESSAY_RULE_ID)) return GRADED_ESSAY_RULE_ID;
   if (savedRules.includes(EBSI_KOREAN_RULE_ID)) return EBSI_KOREAN_RULE_ID;
   if (savedRules.includes(SUTEUK_SHORT_ESSAY_RULE_ID)) return SUTEUK_SHORT_ESSAY_RULE_ID;
   return DEFAULT_BANK_RULE_ID;
@@ -308,6 +318,7 @@ export function profileFileSettingKey(identity) {
 }
 
 export function detectBankRule(analysis) {
+  if (analysis?.questions?.length && analysis.questions.every((q) => q.preprocessMode === GRADED_ESSAY_RULE_ID)) return GRADED_ESSAY_RULE_ID;
   if (analysis?.questions?.length && analysis.questions.every((question) => question.preprocessMode === SUTEUK_SHORT_ESSAY_RULE_ID)) {
     return SUTEUK_SHORT_ESSAY_RULE_ID;
   }
