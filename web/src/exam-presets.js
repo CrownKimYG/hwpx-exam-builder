@@ -1,6 +1,8 @@
+import { compileMixedRules } from "./mixed-generator.js";
 import { compileBankMatrixRules, compileBankQuotaRules } from "./quick-generator.js";
 
 export function presetRules(preset) {
+  if (preset.mode === "mixed") return compileMixedRules(preset.banks.map(b=>({...b,range:preset.mixed?.bankRanges?.[b.bankId]})),preset.mixed?.rows);
   return preset.mode === "matrix" ? compileBankMatrixRules(preset.banks) : compileBankQuotaRules(preset.banks);
 }
 
@@ -15,6 +17,7 @@ export function createExamPreset({ id, name, profiles, quick, mode }) {
     }),
   }));
   const preset = { version: 1, id, name: name.trim(), banks, mode,
+    mixed: structuredClone(quick.mixed || null),
     examName: quick.examName, examCount: Number(quick.examCount), updatedAt: new Date().toISOString() };
   if (!Number.isInteger(preset.examCount) || preset.examCount < 1) throw new Error("시험지 수는 1 이상의 정수로 입력해 주세요.");
   presetRules(preset);
@@ -22,7 +25,7 @@ export function createExamPreset({ id, name, profiles, quick, mode }) {
 }
 
 export function applyExamPreset(preset, profiles, unitsByBank, currentQuick) {
-  if (preset.version !== 1 || !["banks", "matrix"].includes(preset.mode)) throw new Error("지원하지 않는 출제 템플릿입니다.");
+  if (preset.version !== 1 || !["banks", "matrix", "mixed"].includes(preset.mode)) throw new Error("지원하지 않는 출제 템플릿입니다.");
   presetRules(preset);
   for (const bank of preset.banks) {
     const profile = profiles.find((p) => p.bankId === bank.bankId);
@@ -34,13 +37,16 @@ export function applyExamPreset(preset, profiles, unitsByBank, currentQuick) {
       }
     }
   }
+  if (preset.mode === "mixed") for (const row of preset.mixed.rows) {
+    if (row.unitKey && !unitsByBank[row.bankId]?.includes(row.unitKey)) throw new Error("혼합 배치 조건의 단원을 찾지 못했습니다.");
+  }
   const bankCounts = Object.fromEntries(profiles.map((p) => [p.bankId, 0]));
   const cells = {};
   for (const bank of preset.banks) {
     bankCounts[bank.bankId] = bank.count;
     for (const cell of bank.cells) cells[JSON.stringify([bank.bankId, cell.unitKey || null, cell.difficulty || null])] = cell.value;
   }
-  return { ...currentQuick, bankCounts, cells, examName: preset.examName, examCount: preset.examCount,
+  return { ...currentQuick, mixed: structuredClone(preset.mixed || null), bankCounts, cells, examName: preset.examName, examCount: preset.examCount,
     questionCount: preset.banks.reduce((sum, bank) => sum + bank.count, 0) };
 }
 

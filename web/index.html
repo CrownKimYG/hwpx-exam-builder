@@ -131,7 +131,7 @@
                 </div>
                 <p id="exam-preset-status" class="preset-status" role="status"></p>
                 <div class="bank-selection">
-                  <label>출제 방식<select id="quick-mode"><option value="banks">문제은행별 문항 수</option><option value="matrix">문제은행별 단원·난이도 조건표</option></select></label>
+                  <label>출제 방식<select id="quick-mode"><option value="mixed">전체 번호에서 혼합 배치</option><option value="banks" selected>문제은행별 문항 수</option><option value="matrix">문제은행별 단원·난이도 조건표</option></select></label>
                 </div>
                 <details class="exam-settings"><summary>시험지 설정</summary><div class="quick-settings">
                   <label>시험지 이름<input id="quick-exam-name" type="text" value="시험지" maxlength="80" /></label>
@@ -142,6 +142,7 @@
                 </details>
                 <p class="section-caption" title="0문항인 은행은 출제에서 제외됩니다.">은행별 문항 수</p>
                 <div id="bank-quotas" class="bank-quotas"></div>
+                <div id="mixed-config" class="hidden"></div>
                 <div id="matrix-tabs" class="matrix-tabs" role="tablist" aria-label="은행별 출제 조건"></div>
                 <div class="matrix-wrap" id="matrix-wrap"></div>
                 <details class="history-options"><summary>중복 관리 · 출제 이력</summary>

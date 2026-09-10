@@ -1,3 +1,4 @@
+import { compileMixedRules } from "./mixed-generator.js";
 import { readExamHistory, historyUsedCodes, reserveExamHistory, clearExamHistory } from "./exam-history.js";
 import { createExamPreset, applyExamPreset, readExamPresets, writeExamPresets } from "./exam-presets.js";
 import { GRADED_ESSAY_RULE_ID, prepareGradedEssayHwpx } from "./graded-essay-parser.js";
@@ -220,7 +221,7 @@ function renderBankSelectors() {
 }
 
 function renderBankQuotas() {
-  const byBank = elements.quickMode.value === "banks";
+  const byBank = elements.quickMode.value !== "matrix";
   elements.matrixWrap.classList.toggle("hidden", byBank);
   elements.matrixTabs.classList.toggle("hidden", byBank);
   elements.bankQuotas.classList.remove("hidden");
@@ -244,6 +245,7 @@ function renderBankQuotas() {
     const edit = createElement("button", { text: "조건", attributes: { type: "button", "aria-label": `${profile.displayName} 조건 설정` } });
     edit.addEventListener("click", () => {
       document.querySelector(".exam-settings").open = false;
+      if (elements.quickMode.value === "mixed") { document.querySelector("#mixed-config").scrollIntoView({block:"nearest"}); return; }
       state.matrixBankId = profile.bankId;
       elements.quickMode.value = "matrix";
       renderBankQuotas(); renderQuickMatrix();
@@ -749,7 +751,7 @@ function bindExamPresets() {
     try {
       const preset = readExamPresets(localStorage).find((p) => p.id === document.querySelector("#exam-preset").value);
       document.querySelector("#exam-preset-name").value = preset?.name || "";
-      presetStatus(preset ? `${preset.banks.length}개 은행 · ${preset.banks.reduce((sum,b) => sum + b.count, 0)}문항 · ${preset.mode === "matrix" ? "문항 번호별 조건" : "은행별 문항 수"}` : "");
+      presetStatus(preset ? `${preset.banks.length}개 은행 · ${preset.banks.reduce((sum,b) => sum + b.count, 0)}문항 · ${preset.mode === "mixed" ? "전체 번호 혼합" : preset.mode === "matrix" ? "문항 번호별 조건" : "은행별 문항 수"}` : "");
     } catch (error) { presetStatus(error.message, true); }
   });
   document.querySelector("#apply-exam-preset").addEventListener("click", loadExamPreset);
@@ -1466,7 +1468,49 @@ function currentUnits(bankId) {
   return [...map.values()].sort((left, right) => left.label.localeCompare(right.label, "ko", { numeric: true }));
 }
 
+function renderMixedConfig() {
+  const root = document.querySelector("#mixed-config");
+  const active = elements.quickMode.value === "mixed";
+  root.classList.toggle("hidden", !active);
+  if (!active) return;
+  state.quick.mixed ||= { bankRanges: {}, rows: [{ bankId:"", unitKey:"", difficulty:"", count:Number(elements.quickQuestionCount.value), range:"All" }] };
+  const config = state.quick.mixed;
+  const help = createElement("p", { className:"question-label", text:"최종 시험지 번호 기준입니다. 번호 범위는 겹쳐도 됩니다. 예: 1-9, 5-18, 13-20. 빈 범위 또는 All은 전체이며, 한 번호만 입력하면 고정됩니다." });
+  const banks = createElement("details", { className:"mixed-bank-ranges" });
+  banks.append(createElement("summary", { text:"은행별 등장 번호 범위" }));
+  for (const profile of state.bankProfiles) {
+    const label = createElement("label", {text:profile.displayName});
+    const input = createElement("input", {attributes:{type:"text", "aria-label":`${profile.displayName} 등장 번호 범위`,placeholder:"All"}});
+    input.value = config.bankRanges[profile.bankId] || "";
+    input.addEventListener("input",()=>{config.bankRanges[profile.bankId]=input.value; scheduleQuickEstimate();});
+    label.append(input); banks.append(label);
+  }
+  const rows = createElement("div", {className:"mixed-rule-rows"});
+  config.rows.forEach((rule,index)=>{
+    const row = createElement("div",{className:"mixed-rule-row"});
+    const select = (caption, value, options, change) => {
+      const label=createElement("label",{text:caption});
+      const input=createElement("select",{attributes:{"aria-label":`혼합 조건 ${index+1} ${caption}`}});
+      input.replaceChildren(...options.map(([v,t])=>new Option(t,v))); input.value=value;
+      input.addEventListener("change",()=>{change(input.value);scheduleQuickEstimate();});label.append(input);row.append(label);
+    };
+    select("은행",rule.bankId,[["","전체 은행"],...state.bankProfiles.map(p=>[p.bankId,p.displayName])],v=>{rule.bankId=v;rule.unitKey="";renderMixedConfig();});
+    select("단원",rule.unitKey,[["","전체 단원"],...(rule.bankId?currentUnits(rule.bankId).map(u=>[u.key,u.label]):[])],v=>rule.unitKey=v);
+    select("난이도",rule.difficulty,[["","전체"],["lv1","하 / lv1"],["lv2","중 / lv2"],["lv3","상 / lv3"],["유제","유제"],["미분류","미분류"]],v=>rule.difficulty=v);
+    for(const [key,caption,type] of [["count","문항 수","number"],["range","등장 번호","text"]]) {
+      const label=createElement("label",{text:caption}); const input=createElement("input",{attributes:{type,"aria-label":`혼합 조건 ${index+1} ${caption}`,placeholder:key==="range"?"All":"0",...(type==="number"?{min:"0",max:"100"}:{})}});
+      input.value=rule[key]; input.addEventListener("input",()=>{rule[key]=input.value;scheduleQuickEstimate();});label.append(input);row.append(label);
+    }
+    const remove=createElement("button",{text:"×",attributes:{type:"button","aria-label":`혼합 조건 ${index+1} 삭제`}});
+    remove.addEventListener("click",()=>{config.rows.splice(index,1);renderMixedConfig();scheduleQuickEstimate();});row.append(remove);rows.append(row);
+  });
+  const add=createElement("button",{text:"＋ 배치 조건",attributes:{type:"button"}});
+  add.addEventListener("click",()=>{config.rows.push({bankId:"",unitKey:"",difficulty:"",count:0,range:"All"});renderMixedConfig();scheduleQuickEstimate();});
+  root.replaceChildren(help,banks,rows,add);
+}
+
 function renderQuickMatrix() {
+  renderMixedConfig();
   if (!state.bankProfiles.some((p) => p.bankId === state.matrixBankId)) state.matrixBankId = state.bankProfiles[0]?.bankId || null;
   elements.matrixTabs.replaceChildren(...state.bankProfiles.map((p, index) => {
     const button = createElement("button", { text: p.displayName, attributes: { type: "button", role: "tab", id: `bank-tab-${index}`, "aria-controls": `bank-panel-${index}`, "aria-selected": String(state.matrixBankId === p.bankId) } });
@@ -1543,6 +1587,7 @@ function quickQuestions() {
 
 function quickRules() {
   const banks = state.bankProfiles.map((p) => ({ bankId: p.bankId, name: p.displayName, count: Number(state.quick.bankCounts[p.bankId] ?? 0) }));
+  if (elements.quickMode.value === "mixed") return compileMixedRules(banks.map(b=>({...b,range:state.quick.mixed?.bankRanges?.[b.bankId]})),state.quick.mixed?.rows);
   if (elements.quickMode.value === "banks") return compileBankQuotaRules(banks);
   const inputs = [...elements.matrixWrap.querySelectorAll("input[data-bank-id]")];
   return compileBankMatrixRules(banks.map((bank) => ({ ...bank,
@@ -1574,6 +1619,14 @@ function updateQuickEstimate() {
     const disconnected = state.bankProfiles.filter((p) => Number(state.quick.bankCounts[p.bankId]) > 0 && state.files.some((r) => r.bankId === p.bankId && !r.bytes));
     if (disconnected.length) throw new Error(`${disconnected.map((p) => p.displayName).join(", ")}: 원본 파일을 다시 연결해 주세요.`);
     const usedCodes = collectUsedCodes();
+    if (rules.kind === "mixed") {
+      const requested = Number(elements.quickExamCount.value);
+      allocateExamSets({questions:quickQuestions(),rules,usedCodes,examCount:requested,seed:elements.quickSeed.value || "estimate"});
+      elements.quickStatus.className = "quick-status";
+      elements.quickStatus.textContent = `전체 번호 혼합 · ${rules.size}문항 × ${requested}부 구성 가능`;
+      elements.quickGenerate.disabled = false;
+      return;
+    }
     const maximum = estimateMaximumExamSets({ questions: quickQuestions(), rules, usedCodes, seed: elements.quickSeed.value || "estimate" });
     const requested = Number(elements.quickExamCount.value) || 0;
     elements.quickStatus.className = "quick-status";
@@ -1685,7 +1738,17 @@ function renderExamDrafts() {
       scheduleQuickEstimate();
     });
     const validation = createElement("p", { className: "exam-validation", attributes: { "data-validation-for": exam.id } });
-    card.append(header, textarea, validation);
+    const order = createElement("details", {className:"exam-order"});
+    order.append(createElement("summary", {text:"번호별 은행 · 난이도"}));
+    const orderList=createElement("ol");
+    const refreshOrder=()=>{
+      try { orderList.replaceChildren(...examCodes(exam).map(code=>{
+        const q=state.questions.find(q=>q.code===code);
+        return createElement("li",{text:q?`${state.bankProfiles.find(p=>p.bankId===q.bankId)?.displayName || "은행"} · ${q.unitName} · ${{lv1:"하 / lv1",lv2:"중 / lv2",lv3:"상 / lv3"}[q.difficulty] || q.difficulty} · ${code}`:code});
+      })); } catch { orderList.replaceChildren(); }
+    };
+    refreshOrder(); textarea.addEventListener("input",refreshOrder); order.append(orderList);
+    card.append(header, textarea, order, validation);
     return card;
   });
   elements.examList.replaceChildren(...cards);

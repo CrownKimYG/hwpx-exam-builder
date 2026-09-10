@@ -507,3 +507,14 @@ body { background:#f8f9f8; }
 .history-options summary { cursor:pointer; padding:6px 0; }
 .history-options label { display:flex; align-items:center; gap:6px; margin-top:8px; }
 .history-options p { line-height:1.6; }
+
+.mixed-rule-row { display:grid; grid-template-columns:1fr 1fr 1fr 60px 85px 25px; gap:6px; padding:10px 0; border-bottom:1px solid var(--line); }
+.mixed-rule-row label { display:grid; gap:4px; min-width:0; font-size:11px; color:var(--text-muted); }
+.mixed-rule-row input,.mixed-rule-row select,.mixed-bank-ranges input { min-width:0; width:100%; padding:7px 4px; border:1px solid var(--line-strong); border-radius:5px; background:white; }
+.mixed-rule-row button { align-self:end; padding:4px; }
+.mixed-bank-ranges { font-size:12px; }
+.mixed-bank-ranges summary,.exam-order summary { cursor:pointer; padding:8px 0; }
+.mixed-bank-ranges label { display:grid; grid-template-columns:1fr 100px; gap:8px; align-items:center; margin:6px 0; }
+.exam-order { font-size:11px; color:var(--text-muted); }
+.exam-order li { line-height:1.8; }
+@media(max-width:650px) { .mixed-rule-row {grid-template-columns:1fr 1fr 1fr;} }

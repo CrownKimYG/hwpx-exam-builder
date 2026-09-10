@@ -1,3 +1,4 @@
+import { allocateMixedExamSets } from "./mixed-generator.js";
 function hashSeed(seed) {
   let hash = 2166136261;
   for (const character of String(seed)) {
@@ -156,6 +157,7 @@ function matchDemands(demands) {
 }
 
 export function allocateExamSets({ questions, rules, examCount, usedCodes = new Set(), seed = "hwpx" }) {
+  if (rules.kind === "mixed") return allocateMixedExamSets({ questions, rules, examCount, usedCodes, seed });
   if (!Number.isInteger(examCount) || examCount < 1) throw new Error("생성할 시험지 수를 1 이상 입력하세요.");
   const random = seededRandom(seed);
   const demands = candidateMap(questions, rules, examCount, usedCodes, random);
