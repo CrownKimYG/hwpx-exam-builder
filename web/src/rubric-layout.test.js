@@ -18,7 +18,11 @@ test('혼합 채점표는 같은 글자·수식 크기, 배점 고정 너비, �
  for(const t of d.querySelectorAll('tbl')){
   assert.equal(t.querySelector('sz').getAttribute('width'),'18700'); // note paragraph margins
   assert.deepEqual([...t.querySelectorAll('cellSz')].map(n=>n.getAttribute('width')),['15100','3600','15100','3600']);
-  for(const run of t.querySelectorAll('run'))assert.equal(cs.get(run.getAttribute('charPrIDRef')).getAttribute('height'),'1000');
+  for(const run of t.querySelectorAll('run')) {
+   const style=cs.get(run.getAttribute('charPrIDRef'));
+   assert.equal(style.getAttribute('height'),'1000');
+   assert.equal(style.querySelector('bold'),null);
+  }
   for(const cell of t.querySelectorAll('tr:first-of-type > tc, tr > tc:nth-of-type(2)')){
    assert.equal(ps.get(cell.querySelector('p').getAttribute('paraPrIDRef')).querySelector('align').getAttribute('horizontal'),'CENTER');
    assert.equal(cell.querySelector('subList').getAttribute('vertAlign'),'CENTER');

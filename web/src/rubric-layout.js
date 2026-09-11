@@ -48,7 +48,7 @@ export function createRubricNormalizer(header, paragraphStyles) {
       }
       fontIds[face.getAttribute('lang')?.toLowerCase()] = font.getAttribute('id');
     }
-    const charStyle = bold => appendStyle(chars, chars.firstElementChild, node => {
+    const charStyle = () => appendStyle(chars, chars.firstElementChild, node => {
       node.setAttribute('height', String(RUBRIC_FONT_SIZE));
       node.setAttribute('textColor', '#000000');
       node.setAttribute('shadeColor', 'none');
@@ -61,7 +61,6 @@ export function createRubricNormalizer(header, paragraphStyles) {
         if (element) for (const attribute of [...element.attributes]) element.setAttribute(attribute.name, String(value));
       }
       for (const [name, attr] of [['underline','type'],['strikeout','shape'],['outline','type'],['shadow','type']]) child(node, name)?.setAttribute(attr, 'NONE');
-      if (bold) node.insertBefore(header.createElementNS(node.namespaceURI, `${node.prefix ? node.prefix + ':' : ''}bold`), child(node,'underline') || null);
     }).getAttribute('id');
     const paraStyle = center => {
       const node = appendStyle(paras, paras.firstElementChild, node => {
@@ -85,7 +84,7 @@ export function createRubricNormalizer(header, paragraphStyles) {
       paragraphStyles.set(node.getAttribute('id'), node);
       return node.getAttribute('id');
     };
-    return { normal:charStyle(false), bold:charStyle(true), left:paraStyle(false), center:paraStyle(true) };
+    return { normal:charStyle(), left:paraStyle(false), center:paraStyle(true) };
   };
   return (table, width) => {
     if (!isRubricTable(table)) return false;
@@ -123,7 +122,7 @@ export function createRubricNormalizer(header, paragraphStyles) {
           p.setAttribute('pageBreak','0'); p.setAttribute('columnBreak','0');
           children(p,'linesegarray').forEach(n=>n.remove());
         }
-        for (const run of all(list,'run')) run.setAttribute('charPrIDRef',rowIndex===0 ? styles.bold : styles.normal);
+        for (const run of all(list,'run')) run.setAttribute('charPrIDRef',styles.normal);
         for (const equation of all(list,'equation')) {
           const factor = RUBRIC_FONT_SIZE / num(equation,'baseUnit',RUBRIC_FONT_SIZE);
           const eqSize = child(equation,'sz');

@@ -30,6 +30,7 @@ export function createQuestionTypographyNormalizer(header) {
     if(source.getAttribute('textColor')?.toUpperCase()==='#FFFFFF' && Number(source.getAttribute('height'))<=100)return id;
     const clone=source.cloneNode(true);
     clone.setAttribute('height',String(size));
+    [...clone.children].filter(n=>name(n)==='bold').forEach(n=>n.remove());
     const ref=child(clone,'fontRef');
     if(ref)for(const [lang,fontId] of Object.entries(fonts()))ref.setAttribute(lang,fontId);
     for(const [tag,value] of [['ratio',100],['relSz',100],['spacing',0],['offset',0]]) {
