@@ -1,4 +1,4 @@
-import { loadArchive, compareDocumentPaths } from "./archive.js";
+import { generateHwpxArchive, loadArchive, compareDocumentPaths } from "./archive.js";
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 export const HANDOFF_METADATA_PATH = "META-INF/hwpx-exam-builder.json";
@@ -113,7 +113,7 @@ export async function createHandoffHwpx(renderedBytes, metadataInput) {
   zip.file("Contents/header.xml", new XMLSerializer().serializeToString(headerDocument));
   zip.file(lastSectionName, new XMLSerializer().serializeToString(sectionDocument));
   zip.file(HANDOFF_METADATA_PATH, JSON.stringify(metadata));
-  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+  return generateHwpxArchive(zip);
 }
 
 export async function inspectHandoffHwpx(bytes) {
@@ -140,5 +140,5 @@ export async function inspectHandoffHwpx(bytes) {
 export async function finalizeHandoffHwpx(bytes) {
   const zip = await loadArchive(bytes);
   zip.remove(HANDOFF_METADATA_PATH);
-  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+  return generateHwpxArchive(zip);
 }

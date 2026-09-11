@@ -1,4 +1,4 @@
-import { loadArchive } from "./archive.js";
+import { generateHwpxArchive, loadArchive } from "./archive.js";
 
 const SECTION_RE = /^Contents\/section(\d+)\.xml$/;
 
@@ -39,7 +39,7 @@ export async function renumberEndnotesHwpx(bytes, startAt = 1) {
       .forEach((begin) => begin.setAttribute("endnote", String(startAt)));
     zip.file("Contents/header.xml", new XMLSerializer().serializeToString(headerDocument));
   }
-  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+  return generateHwpxArchive(zip);
 }
 
 export async function removeEndnotesHwpx(bytes) {
@@ -49,7 +49,7 @@ export async function removeEndnotesHwpx(bytes) {
     descendants(documentNode.documentElement, "endNote").forEach((note) => note.remove());
     zip.file(name, new XMLSerializer().serializeToString(documentNode));
   }
-  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+  return generateHwpxArchive(zip);
 }
 
 function emptyPageBreakParagraph(documentNode, prototype) {
@@ -96,7 +96,7 @@ export async function insertCompletelyBlankPageBeforeEndnotesHwpx(bytes) {
     emptyPageBreakParagraph(target.documentNode, paragraphPrototype),
   );
   zip.file(target.name, new XMLSerializer().serializeToString(target.documentNode));
-  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+  return generateHwpxArchive(zip);
 }
 
 function blankSectionFrom(sourceDocument) {
@@ -179,5 +179,5 @@ export async function appendCompletelyBlankPageHwpx(bytes) {
   const headerDocument = parseXml(await headerEntry.async("string"), "Contents/header.xml");
   headerDocument.documentElement.setAttribute("secCnt", String(names.length + 1));
   zip.file("Contents/header.xml", new XMLSerializer().serializeToString(headerDocument));
-  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+  return generateHwpxArchive(zip);
 }

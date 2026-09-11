@@ -21,6 +21,8 @@ test('실제 조립에서 템플릿 제목·누름틀 값·고정 문구 서식�
  const controls='<hp:secPr><hp:pagePr width="59528"><hp:margin left="4000" right="4000"/></hp:pagePr></hp:secPr>';
  template.file('Contents/section0.xml',section(p(1,'템플릿 제목')+p(2,'입력된 시험지 이름')+p(3,'#1').replace('<hp:t>',controls+'<hp:t>')+p(4,'고정 문구')));
  source.file('Contents/section0.xml',section(p(11,'원본 문제').replace('</hp:run>',`<hp:ctrl><hp:endNote number="1"><hp:subList>${p(12,'[정답] 2')}${p(13,'[해설] 원본 풀이')}</hp:subList></hp:endNote></hp:ctrl></hp:run>`)));
+ const cached = await template.file('Contents/section0.xml').async('string');
+ template.file('Contents/section0.xml', cached.replaceAll('</hp:p>', '<hp:linesegarray><hp:lineseg textpos="0" vertpos="12345"/></hp:linesegarray></hp:p>'));
  const q={fileCode:'a',code:'01-001',ordinal:1,sectionName:'Contents/section0.xml',copyMode:'root-endnote-block',copyStart:0,copyEnd:1,hasEndnote:true};
  const output=await buildExamFromSourcesHwpx([{id:'a',bytes:await source.generateAsync({type:'uint8array'})}],await template.generateAsync({type:'uint8array'}),[q]);
  const z=await JSZip.loadAsync(output),d=parse(await z.file('Contents/section0.xml').async('string')),h=parse(await z.file('Contents/header.xml').async('string'));
@@ -33,5 +35,6 @@ test('실제 조립에서 템플릿 제목·누름틀 값·고정 문구 서식�
   const t=all(d,'t').find(n=>n.textContent.includes(label));assert.ok(t,label);
   const c=styles.get(t.parentElement.getAttribute('charPrIDRef'));assert.equal(c.getAttribute('height'),'1000');assert.equal(all(c,'bold').length,0);
  }
+ assert.equal(all(d,'linesegarray').length,0,'fixed template content must also lose stale line positions');
  assert.equal(all(d,'pagePr')[0].getAttribute('width'),'59528');
 });

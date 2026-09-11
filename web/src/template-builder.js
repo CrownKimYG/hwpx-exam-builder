@@ -152,10 +152,22 @@ const REF_TO_MAP = {
   paraPrIDRef: "paraPrIDRef",
   tabPrIDRef: "tabPrIDRef",
   numberingIDRef: "numberingIDRef",
+  outlineShapeIDRef: "numberingIDRef",
   bulletIDRef: "bulletIDRef",
   styleIDRef: "styleIDRef",
   nextStyleIDRef: "styleIDRef",
 };
+
+// Heading idRef is typed by its heading kind; NONE is not a reference.
+function referenceAttributes(element) {
+  const refs = Object.entries(REF_TO_MAP);
+  if (localName(element) === "heading") {
+    const type = element.getAttribute("type");
+    if (type === "NUMBER" || type === "OUTLINE") refs.push(["idRef", "numberingIDRef"]);
+    else if (type === "BULLET") refs.push(["idRef", "bulletIDRef"]);
+  }
+  return refs;
+}
 
 function directChildrenByName(container, name) {
   return Array.from(container?.children || []).filter((child) => localName(child) === name);
@@ -253,7 +265,7 @@ const FONT_ATTR_TO_LANG = {
 function remapReferences(root, maps, fontMaps, binaryMap) {
   const all = [root, ...Array.from(root.getElementsByTagNameNS("*", "*"))];
   for (const element of all) {
-    for (const [attribute, mapName] of Object.entries(REF_TO_MAP)) {
+    for (const [attribute, mapName] of referenceAttributes(element)) {
       if (!element.hasAttribute(attribute)) continue;
       const value = element.getAttribute(attribute);
       const mapped = maps[mapName]?.get(value);
@@ -309,12 +321,11 @@ function pruneUnusedReferenceItems(headerDocument, contentDocuments) {
     needed.set(refName, new Set(items.has("0") ? ["0"] : []));
   }
 
-  const refNames = new Map(Object.entries(REF_TO_MAP));
   const scan = (root) => {
     let changed = false;
     const elements = [root, ...descendants(root, "*")];
     for (const element of elements) {
-      for (const [attribute, refName] of refNames) {
+      for (const [attribute, refName] of referenceAttributes(element)) {
         const value = element.getAttribute?.(attribute);
         // UINT32_MAX is the HWP sentinel for an inherited/no character style.
         if (value == null || value === "4294967295" || !needed.has(refName)) continue;
@@ -389,7 +400,7 @@ function referenceCollectionErrors(headerDocument, contentDocuments) {
   [headerDocument, ...contentDocuments].forEach((documentNode) => {
     const root = documentNode.documentElement;
     [root, ...descendants(root, "*")].forEach((element) => {
-      for (const [attribute, refName] of Object.entries(REF_TO_MAP)) {
+      for (const [attribute, refName] of referenceAttributes(element)) {
         const value = element.getAttribute?.(attribute);
         if (value == null || value === "0" || value === "4294967295") continue;
         if (!idsByRef.get(refName)?.has(value)) dangling.add(`${attribute}=${value}`);
@@ -979,9 +990,19 @@ async function createOutputZip(sourceZip, overrides, additions, sectionNames, ke
       output.file(entry.name, await entry.async("uint8array"), { binary: true, compression: "DEFLATE", date: entry.date });
     }
   }
-  for (const sectionName of sectionNames) output.file(sectionName, overrides.get(sectionName), { compression: "DEFLATE" });
+  // Template paragraphs (including headers, footers and nested tables) retain
+  // cached positions too. Mixing those with freshly inserted paragraphs causes
+  // Hancom's document consistency warning; invalidate the entire output section.
+  const withoutLineCache = (xml, path) => {
+    const doc = parseXml(xml, path);
+    descendants(doc.documentElement, "linesegarray").forEach(node => node.remove());
+    return new XMLSerializer().serializeToString(doc);
+  };
+  for (const sectionName of sectionNames) {
+    output.file(sectionName, withoutLineCache(overrides.get(sectionName), sectionName), { compression: "DEFLATE" });
+  }
   for (const [path, xml] of overrides) {
-    if (MASTER_PAGE_RE.test(path)) output.file(path, xml, { compression: "DEFLATE" });
+    if (MASTER_PAGE_RE.test(path)) output.file(path, withoutLineCache(xml, path), { compression: "DEFLATE" });
   }
   for (const [path, bytes] of additions) {
     if (keptBinaryPaths.has(path)) output.file(path, bytes, { binary: true, compression: "DEFLATE" });
