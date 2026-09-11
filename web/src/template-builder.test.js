@@ -145,7 +145,7 @@ test("양면 인쇄용 미주 앞 빈 페이지는 정확히 두 개의 빈 페�
     getAttribute: (name) => name === "pageBreak" ? pageBreak : null,
     getElementsByTagNameNS: (_, name) => name === "t"
       ? [{ localName: "t", textContent: text }]
-      : [{ localName: "run" }, { localName: "t", textContent: text }, ...(object ? [{ localName: object }] : [])],
+      : [{ localName: "run" }, { localName: "t", textContent: text }, ...(object ? [{ localName: object, getElementsByTagNameNS: () => [] }] : [])],
   });
   assert.equal(isEndnoteBlankPageSeparator([p(), p()]), true);
   assert.equal(isEndnoteBlankPageSeparator([p()]), false);

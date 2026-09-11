@@ -953,11 +953,18 @@ async function createOutputZip(sourceZip, overrides, additions, sectionNames, ke
 }
 
 export function isEndnoteBlankPageSeparator(paragraphs) {
-  return paragraphs.length === 2 && paragraphs.every((paragraph) => (
+  return paragraphs.length === 2 && paragraphs.every((paragraph, index) => (
     localName(paragraph) === "p"
     && paragraph.getAttribute("pageBreak") === "1"
     && !textOf(paragraph)
-    && descendants(paragraph, "*").every((node) => ["run", "t"].includes(localName(node)))
+    && descendants(paragraph, "*").every((node) => {
+      const name = localName(node);
+      if (["run", "t"].includes(name)) return true;
+      if (index !== 0) return false;
+      if (name === "ctrl") return descendants(node, "pageHiding").length === 1;
+      return name === "pageHiding" && ["hideHeader", "hideFooter", "hideMasterPage", "hideBorder", "hideFill", "hidePageNum"]
+        .every((attribute) => node.getAttribute(attribute) === "1");
+    })
   ));
 }
 

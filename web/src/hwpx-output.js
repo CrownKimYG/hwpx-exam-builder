@@ -80,8 +80,19 @@ export async function insertCompletelyBlankPageBeforeEndnotesHwpx(bytes) {
   const paragraphPrototype = Array.from(target.documentNode.documentElement.children)
     .find((element) => localName(element) === "p");
   if (!paragraphPrototype) throw new Error("문제와 해설 사이의 빈 페이지를 만들 문단 서식이 없습니다.");
+  const blankParagraph = emptyPageBreakParagraph(target.documentNode, paragraphPrototype);
+  const run = descendants(blankParagraph, "run")[0];
+  const namespace = paragraphPrototype.namespaceURI;
+  const prefix = paragraphPrototype.prefix || "hp";
+  const control = target.documentNode.createElementNS(namespace, `${prefix}:ctrl`);
+  const hiding = target.documentNode.createElementNS(namespace, `${prefix}:pageHiding`);
+  for (const attribute of ["hideHeader", "hideFooter", "hideMasterPage", "hideBorder", "hideFill", "hidePageNum"]) {
+    hiding.setAttribute(attribute, "1");
+  }
+  control.appendChild(hiding);
+  run.insertBefore(control, run.firstChild);
   target.documentNode.documentElement.append(
-    emptyPageBreakParagraph(target.documentNode, paragraphPrototype),
+    blankParagraph,
     emptyPageBreakParagraph(target.documentNode, paragraphPrototype),
   );
   zip.file(target.name, new XMLSerializer().serializeToString(target.documentNode));
