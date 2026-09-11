@@ -1,3 +1,4 @@
+import { removeSourceHeadersAndFooters } from "./source-preprocess.js";
 import { loadArchive, compareDocumentPaths } from "./archive.js";
 import { GRADED_ESSAY_RULE_ID } from "./graded-essay-parser.js";
 import JSZip from "jszip";
@@ -1289,7 +1290,7 @@ export async function buildExamFromTemplateHwpx(
   const sourceSectionDocuments = new Map();
   for (const sectionName of new Set(questions.map((question) => question.sectionName))) {
     const entry = sourceZip.file(sectionName);
-    if (entry) sourceSectionDocuments.set(sectionName, parseXml(await entry.async("string"), sectionName));
+    if (entry) sourceSectionDocuments.set(sectionName, removeSourceHeadersAndFooters(parseXml(await entry.async("string"), sectionName)));
   }
 
   const selectedQuestions = selectedOrdinals
@@ -1931,7 +1932,7 @@ export async function buildExamFromSourcesHwpx(
     for (const sectionName of neededSections) {
       const entry = zip.file(sectionName);
       if (!entry) throw new Error(`${source.id}의 ${sectionName}을 찾지 못했습니다.`);
-      sectionDocuments.set(sectionName, parseXml(await entry.async("string"), `${source.id} ${sectionName}`));
+      sectionDocuments.set(sectionName, removeSourceHeadersAndFooters(parseXml(await entry.async("string"), `${source.id} ${sectionName}`)));
     }
     sourceContexts.set(source.id, { source, zip, headerDocument, contentDocument, sectionDocuments, ...emptyReferenceMaps() });
   }

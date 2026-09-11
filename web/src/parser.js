@@ -1,3 +1,4 @@
+import { removeSourceHeadersAndFooters } from "./source-preprocess.js";
 import { loadArchive, compareDocumentPaths } from "./archive.js";
 import JSZip from "jszip";
 import { difficultyFromLabel } from "./bank-model.js";
@@ -499,14 +500,16 @@ export async function buildExamHwpx(sourceBytes, questions, selectedOrdinals, te
     .sort(compareDocumentPaths);
 
   for (const sectionName of sectionNames) {
+    const sourceDocument = new DOMParser().parseFromString(await zip.file(sectionName).async("string"), "application/xml");
+    if (sourceDocument.querySelector("parsererror")) throw new Error(`${sectionName} XML을 다시 조립하지 못했습니다.`);
+    removeSourceHeadersAndFooters(sourceDocument);
+    overrides.set(sectionName, new XMLSerializer().serializeToString(sourceDocument));
     const ranges = questions
       .filter((question) => question.sectionName === sectionName)
       .sort((left, right) => left.blockStart - right.blockStart);
     if (!ranges.length) continue;
 
-    const xml = await zip.file(sectionName).async("string");
-    const documentNode = new DOMParser().parseFromString(xml, "application/xml");
-    if (documentNode.querySelector("parsererror")) throw new Error(`${sectionName} XML을 다시 조립하지 못했습니다.`);
+    const documentNode = sourceDocument;
     const root = documentNode.documentElement;
     const children = Array.from(root.children);
     const isFirstSelectedSection = sectionName === questions.find((question) => selected.has(question.ordinal))?.sectionName;
