@@ -14,6 +14,10 @@ export const EBSI_KOREAN_RULE_ID = "ebsi-korean-v1";
 export const SUTEUK_SHORT_ESSAY_RULE_ID = "suteuk-short-essay-v1";
 export const SUTEUK_SHORT_ESSAY_ANALYSIS_VERSION = 1;
 
+export function canTransformBankQuestions(profiles) {
+  return profiles.some((profile) => ![EBSI_KOREAN_RULE_ID, SUTEUK_SHORT_ESSAY_RULE_ID, GRADED_ESSAY_RULE_ID].includes(profile.ruleId));
+}
+
 export const BANK_RULES = Object.freeze([
   Object.freeze({
     id: AUTO_BANK_RULE_ID,

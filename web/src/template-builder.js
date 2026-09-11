@@ -564,6 +564,13 @@ function isSuteukQuestion(question) {
   return question.preprocessMode === SUTEUK_SHORT_ESSAY_PREPROCESS_MODE;
 }
 
+export function questionTransformMode(question, requestedMode) {
+  return isEbsiKoreanQuestion(question) || isSuteukQuestion(question)
+    || question.preprocessMode === GRADED_ESSAY_RULE_ID
+    || ["ebsi-korean-v1", "suteuk-short-essay-v1", GRADED_ESSAY_RULE_ID].includes(question.ruleId)
+    ? "original" : requestedMode;
+}
+
 function passageGroupKey(question) {
   return isEbsiKoreanQuestion(question)
     ? `${question.fileCode}:${question.sectionName}:${question.passageGroupId}`
@@ -1812,6 +1819,7 @@ function groupKoreanPassageQuestions(questions) {
 }
 
 function solutionParagraphs(question, targetDocument, context, outputIndex, transformMode) {
+  transformMode = questionTransformMode(question, transformMode);
   const answer = targetDocument.importNode(question.answerElement, true);
   const explanation = (question.explanationElements || []).map((element) => targetDocument.importNode(element, true));
   const result = [answer, ...explanation];
@@ -1997,6 +2005,7 @@ export async function buildExamFromSourcesHwpx(
     targetDocument,
     { includePassage = false, outputIndex = question.ordinal } = {},
   ) => {
+    const effectiveMode = questionTransformMode(question, transformMode);
     const context = sourceContexts.get(question.fileCode);
     if (!context) throw new Error(`${question.fileCode} 문제은행 원문을 찾지 못했습니다.`);
     const sourceDocument = context.sectionDocuments.get(question.sectionName);
@@ -2009,7 +2018,7 @@ export async function buildExamFromSourcesHwpx(
       ? question.copyEnd
       : Number.isInteger(question.contentEnd) ? question.contentEnd : question.blockEnd;
     const removeChoices = question.copyMode !== "root-endnote-block"
-      && transformMode !== "original"
+      && effectiveMode !== "original"
       && question.answerType === "multiple_choice";
     const sourceElements = children.slice(contentStart, contentEnd).filter((_, offset) => (
       !removeChoices || !question.choiceElementIndexes?.includes(contentStart + offset)
@@ -2024,12 +2033,12 @@ export async function buildExamFromSourcesHwpx(
     let clones = [...passageClones, ...questionClones];
     if (question.copyMode === "root-endnote-block") {
       const macroClones = isEbsiKoreanQuestion(question) ? questionClones : clones;
-      transformMacroQuestionClones(macroClones, question, targetDocument, transformMode);
+      transformMacroQuestionClones(macroClones, question, targetDocument, effectiveMode);
       if (macroClones !== clones) clones = [...passageClones, ...questionClones];
     } else if (isEbsiKoreanQuestion(question)) {
-      if (transformMode === "essay") rewriteEssayEnding(questionClones);
+      if (effectiveMode === "essay") rewriteEssayEnding(questionClones);
     } else {
-      transformQuestionClones(clones, question, targetDocument, transformMode);
+      transformQuestionClones(clones, question, targetDocument, effectiveMode);
     }
     clones.forEach((clone) => {
       if (question.copyMode === "root-endnote-block") prepareMacroCopyElement(clone, { preserveLineLayout: isSuteukQuestion(question) });

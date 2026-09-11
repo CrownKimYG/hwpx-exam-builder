@@ -354,7 +354,7 @@ input[readonly] { background: #f0f4f2 !important; color: #365749; }
 .exam-card input { font-size: 13px; }
 .exam-card textarea { font-size: 12px; padding: 9px; min-height: 64px; }
 .exam-validation { font-size: 11px; line-height: 1.6; }
-.generation-inner { grid-template-columns: minmax(180px, 1fr) 170px auto auto; align-items: center; padding: 12px 0; }
+.generation-inner { grid-template-columns: minmax(180px, 1fr) 170px minmax(180px, auto) auto auto; align-items: center; padding: 12px 0; }
 .download-summary { display: grid; gap: 4px; }
 .download-summary strong { font-size: 13px; }
 .download-summary span { font-size: 11px; color: var(--text-muted); }

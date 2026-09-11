@@ -205,9 +205,9 @@
       <div class="generation-inner">
         <div class="download-summary"><strong id="download-summary">시험지를 구성해 주세요</strong></div>
         <label>다운로드 형식<select id="output-type"><option value="problem">문제지</option><option value="solution">문제지 + 해설 포함</option><option value="both">문제지 · 해설지 각각</option></select></label>
+        <label>문항 형식<select id="question-format" aria-describedby="question-format-hint"><option value="original">원본</option><option value="short">주관식</option><option value="essay">서술형</option></select><small id="question-format-hint">수특변형에 적용 · 다른 은행은 원본 유지</small></label>
         <details class="output-options"><summary>출력 설정</summary><div class="output-options-body">
           <div class="template-control"><label class="button" for="template-file">템플릿 선택</label><input id="template-file" type="file" accept=".hwpx,application/zip" /><span id="template-file-name">기본 템플릿</span></div>
-          <label>문항 형식<select id="question-format"><option value="original">원본</option><option value="short">주관식</option><option value="essay">서술형</option></select></label>
           <label class="check-control"><input id="hide-endnote-numbers" type="checkbox" />미주번호 숨기기</label>
           <label class="check-control"><input id="show-subject-title" type="checkbox" />과목 제목 표시</label>
           <button id="save-handoff" type="button" disabled>다른 과목 담당자에게 인계용 저장</button>

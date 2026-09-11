@@ -48,6 +48,7 @@ import {
   SUTEUK_SHORT_ESSAY_RULE_ID,
   bankRuleRequiresPreprocessing,
   bankSubjectForRule,
+  canTransformBankQuestions,
   createBankProfile,
   detectBankRule,
   detectBankRuleFromFilenames,
@@ -269,12 +270,11 @@ function renderBankProfileSummary() {
   elements.bankTitleSeparator.classList.toggle("hidden", !hasFiles);
   elements.bankProfileSummary.classList.toggle("hidden", !hasFiles);
   elements.activeBankName.textContent = profile?.displayName || (hasFiles ? "추가한 파일" : "");
-  const originalOnly = state.bankProfiles.some((p) => [EBSI_KOREAN_RULE_ID, SUTEUK_SHORT_ESSAY_RULE_ID, GRADED_ESSAY_RULE_ID].includes(p.ruleId));
-  if (originalOnly) {
-    elements.questionFormat.value = "original";
-    state.settings.questionFormat = "original";
-  }
+  const originalOnly = !canTransformBankQuestions(state.bankProfiles);
   elements.questionFormat.disabled = originalOnly;
+  document.querySelector("#question-format-hint").textContent = originalOnly
+    ? "현재 은행은 원본 형식 유지"
+    : "수특변형에 적용 · 다른 은행은 원본 유지";
   renderBankSelectors();
 }
 
