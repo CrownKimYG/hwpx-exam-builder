@@ -1,4 +1,4 @@
-import JSZip from "jszip";
+import { loadArchive, compareDocumentPaths } from "./archive.js";
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 export const HANDOFF_METADATA_PATH = "META-INF/hwpx-exam-builder.json";
@@ -101,9 +101,9 @@ export function validateHandoffMetadata(metadata) {
 
 export async function createHandoffHwpx(renderedBytes, metadataInput) {
   const metadata = createHandoffMetadata(metadataInput);
-  const zip = await JSZip.loadAsync(renderedBytes, { checkCRC32: true });
+  const zip = await loadArchive(renderedBytes);
   const headerEntry = zip.file("Contents/header.xml");
-  const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort();
+  const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort(compareDocumentPaths);
   const lastSectionName = sectionNames.at(-1);
   if (!headerEntry || !lastSectionName) throw new Error("인계용 HWPX의 본문 구조를 찾지 못했습니다.");
   const headerDocument = parseXml(await headerEntry.async("string"), "header.xml");
@@ -117,7 +117,7 @@ export async function createHandoffHwpx(renderedBytes, metadataInput) {
 }
 
 export async function inspectHandoffHwpx(bytes) {
-  const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  const zip = await loadArchive(bytes);
   const entry = zip.file(HANDOFF_METADATA_PATH);
   if (!entry) throw new Error("이 앱에서 만든 인계용 HWPX가 아닙니다.");
   let metadata;
@@ -138,7 +138,7 @@ export async function inspectHandoffHwpx(bytes) {
 }
 
 export async function finalizeHandoffHwpx(bytes) {
-  const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  const zip = await loadArchive(bytes);
   zip.remove(HANDOFF_METADATA_PATH);
   return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 }

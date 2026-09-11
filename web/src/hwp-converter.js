@@ -1,4 +1,4 @@
-import JSZip from "jszip";
+import { loadArchive, compareDocumentPaths } from "./archive.js";
 
 const HWPX_MIME_TYPE = "application/vnd.hancom.hwpx";
 const PREFIXED_HWPX_ATTRIBUTE_RE = /\s(?:hp|hh|hc|hs|ha):([A-Za-z_][\w.-]*)=/g;
@@ -58,7 +58,7 @@ export function detectSourceImageFormat(bytes) {
 export async function repairConvertedHwpxBinData(bytes, getSourceImageBytes) {
   if (typeof getSourceImageBytes !== "function") return bytes;
 
-  const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  const zip = await loadArchive(bytes);
   const contentEntry = zip.file("Contents/content.hpf");
   if (!contentEntry) throw new Error("변환된 HWPX에 Contents/content.hpf가 없습니다.");
 
@@ -170,8 +170,8 @@ function parserFileFrom(bytes, sourceFile) {
 }
 
 export async function normalizeConvertedHwpx(bytes) {
-  const zip = await JSZip.loadAsync(bytes);
-  const xmlPaths = Object.keys(zip.files).filter((path) => path.endsWith(".xml")).sort();
+  const zip = await loadArchive(bytes);
+  const xmlPaths = Object.keys(zip.files).filter((path) => path.endsWith(".xml")).sort(compareDocumentPaths);
   let endnoteNumber = 0;
   for (const path of xmlPaths) {
     let xml = await zip.file(path).async("string");
@@ -198,6 +198,7 @@ export async function normalizeBankFile(file, {
   normalizeConverted = normalizeConvertedHwpx,
   convertHwp = null,
 } = {}) {
+  if (file.size > 256 * 1024 * 1024) throw new Error("파일 크기가 허용 범위를 초과합니다.");
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (!isLegacyHwpFile(file)) {
     return { bytes, sourceBytes: bytes, parserFile: file, convertedFromHwp: false };

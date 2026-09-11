@@ -1,8 +1,7 @@
-import JSZip from "jszip";
+import { loadArchive } from "./archive.js";
 import { findTrimmedContentEnd, plainText } from "./parser.js";
 
 export const SUTEUK_SHORT_ESSAY_PREPROCESS_MODE = "suteuk-short-essay-v1";
-const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const DIFFICULTY_BY_TYPE = Object.freeze({ 약술법: "유제", 연습문제: "유제", 기본: "lv1", 실력: "lv2", 심화: "lv3" });
 const SOURCE_CODE_RE = /\[\d{5}-\d{4}\]/g;
 const NON_BODY = new Set(["endNote", "footNote", "header", "footer"]);
@@ -228,10 +227,9 @@ function describeParagraph(paragraph) {
 }
 
 export async function prepareSuteukShortEssayHwpx(file) {
+  if (file.size > 256 * 1024 * 1024) throw new Error("파일 크기가 허용 범위를 초과합니다.");
   if (!/\.hwpx$/i.test(file.name)) throw new Error(".hwpx 파일만 사용할 수 있습니다.");
-  const zip = await JSZip.loadAsync(await file.arrayBuffer(), { checkCRC32: true });
-  const totalSize = Object.values(zip.files).reduce((sum, entry) => sum + (entry._data?.uncompressedSize || 0), 0);
-  if (totalSize > MAX_UNCOMPRESSED_BYTES) throw new Error("압축 해제 크기가 허용 범위를 초과합니다.");
+  const zip = await loadArchive(await file.arrayBuffer());
   const sections = Object.keys(zip.files).filter((name) => /^Contents\/section\d+\.xml$/.test(name))
     .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
   if (!sections.length) throw new Error("본문 section XML을 찾을 수 없습니다.");

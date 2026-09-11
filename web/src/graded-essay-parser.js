@@ -1,4 +1,4 @@
-import JSZip from "jszip";
+import { loadArchive } from "./archive.js";
 import { parseHwpx, plainText, findTrimmedContentEnd, hasRenderableElementContent } from "./parser.js";
 
 export const GRADED_ESSAY_RULE_ID = "graded-essay-v1";
@@ -28,7 +28,7 @@ export function parseGradedEssayHeading(text) {
 export async function prepareGradedEssayHwpx(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const analysis = await parseHwpx({ name: file.name, arrayBuffer: async () => bytes });
-  const zip = await JSZip.loadAsync(bytes);
+  const zip = await loadArchive(bytes);
   const sections = new Map();
   for (const q of analysis.questions) {
     if (!sections.has(q.sectionName)) {

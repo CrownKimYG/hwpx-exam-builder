@@ -518,3 +518,27 @@ body { background:#f8f9f8; }
 .exam-order { font-size:11px; color:var(--text-muted); }
 .exam-order li { line-height:1.8; }
 @media(max-width:650px) { .mixed-rule-row {grid-template-columns:1fr 1fr 1fr;} }
+
+/* Keep primary quantities visible and prevent action bars from covering inputs. */
+.quick-actions { position: static; }
+#bank-quotas { margin-bottom: 12px; }
+.generation-inner { grid-template-columns: minmax(0, 1fr) auto auto; }
+.output-options-body > label { display: grid; gap: 6px; }
+.output-options-body select { width: 100%; min-height: 36px; }
+[data-file-input]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+input[type="file"][hidden], button[hidden] { display: none !important; }
+#close-output-options { justify-self: end; }
+@media (max-width: 1080px) {
+  .output-options-body { position: fixed; left: 16px; right: 16px; bottom: 92px; width: auto; max-height: calc(100dvh - 120px); }
+  .shell { padding-bottom: 112px; }
+}
+@media (max-width: 600px) {
+  .generation-inner { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+  .download-summary { grid-column: 1; font-size: 11px; }
+  .output-options { grid-column: 2; grid-row: 1; }
+  .generate { grid-column: 1 / -1; min-height: 40px; }
+  .quota-count span { white-space: nowrap; }
+}
+
+.quick-card > .quick-actions { flex-shrink: 0; }
+.quick-card:has(#quick-body.hidden) > .quick-actions { display: none; }

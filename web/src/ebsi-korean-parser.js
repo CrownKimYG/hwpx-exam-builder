@@ -1,9 +1,8 @@
-import JSZip from "jszip";
+import { loadArchive, compareDocumentPaths } from "./archive.js";
 import { hasRenderableElementContent, plainText } from "./parser.js";
 
 export const EBSI_KOREAN_PREPROCESS_MODE = "ebsi-endnote-v1";
 
-const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const PASSAGE_MARKER_RE = /^\[(\d{1,3})[~～](\d{1,3})\]\[지문\]$/;
 const PASSAGE_METADATA_RE = /#번\d{1,3}[~～]\d{1,3}#문항코드$/;
 const QUESTION_METADATA_RE = /#번(\d{1,3})#문항코드([A-Za-z0-9]+-\d+)/;
@@ -323,15 +322,13 @@ function multipleChoiceAnswer(answerText) {
 }
 
 export async function prepareEbsiKoreanHwpx(file) {
+  if (file.size > 256 * 1024 * 1024) throw new Error("파일 크기가 허용 범위를 초과합니다.");
   if (!file.name.toLowerCase().endsWith(".hwpx")) throw new Error(".hwpx 파일만 사용할 수 있습니다.");
   const data = await file.arrayBuffer();
-  const zip = await JSZip.loadAsync(data, { checkCRC32: true });
-  const entries = Object.values(zip.files).filter((entry) => !entry.dir);
-  const totalSize = entries.reduce((sum, entry) => sum + (entry._data?.uncompressedSize || 0), 0);
-  if (totalSize > MAX_UNCOMPRESSED_BYTES) throw new Error("압축 해제 크기가 허용 범위를 초과합니다.");
+  const zip = await loadArchive(data);
   const sectionNames = Object.keys(zip.files)
     .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
-    .sort();
+    .sort(compareDocumentPaths);
   if (!sectionNames.length) throw new Error("본문 section XML을 찾을 수 없습니다.");
 
   const questions = [];

@@ -46,10 +46,20 @@ async function openDatabase() {
           files.createIndex("bankId", "bankId", { unique: false });
         }
       });
-      request.addEventListener("success", () => resolve(request.result), { once: true });
+      let rejected = false;
+      request.addEventListener("success", () => {
+        const database = request.result;
+        if (rejected) { database.close(); return; }
+        const invalidate = () => { databasePromise = null; };
+        database.addEventListener("versionchange", () => { invalidate(); database.close(); });
+        database.addEventListener("close", invalidate);
+        resolve(database);
+      }, { once: true });
+      request.addEventListener("error", () => { rejected = true; }, { once: true });
+      request.addEventListener("blocked", () => { rejected = true; }, { once: true });
       request.addEventListener("error", () => reject(request.error || new Error("브라우저 캐시를 열지 못했습니다.")), { once: true });
       request.addEventListener("blocked", () => reject(new Error("다른 탭에서 브라우저 캐시를 사용 중입니다.")), { once: true });
-    });
+    }).catch(error => { databasePromise = null; throw error; });
   }
   return databasePromise;
 }
@@ -158,12 +168,14 @@ export async function listCachedFileAnalysisRecords(bankId) {
   const done = transactionDone(transaction);
   const result = await requestResult(transaction.objectStore(FILE_STORE).index("bankId").getAll(bankId));
   await done;
-  return result.filter((record) => record.cacheKey === fileAnalysisCacheKey(record.bankId, record.identity, record.ruleId))
-    .sort((left, right) => String(left.identity?.relativePath || "").localeCompare(
-      String(right.identity?.relativePath || ""),
-      "ko",
-      { numeric: true, sensitivity: "base" },
-    ));
+  // Keep source snapshots from old rule versions so an upgrade can reanalyse
+  // them locally instead of making a saved bank disappear.
+  const sorted = result.map(record => ({ ...record,
+    needsReanalysis: record.cacheKey !== fileAnalysisCacheKey(record.bankId, record.identity, record.ruleId),
+  })).sort((left, right) => String(left.identity?.relativePath || "").localeCompare(
+    String(right.identity?.relativePath || ""), "ko", { numeric: true, sensitivity: "base" },
+  ) || String(left.savedAt || "").localeCompare(String(right.savedAt || "")));
+  return [...new Map(sorted.map(record => [record.identity.relativePath, record])).values()];
 }
 
 export async function clearBankFileAnalyses(bankId) {

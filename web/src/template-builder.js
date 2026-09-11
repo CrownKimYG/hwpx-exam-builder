@@ -1,3 +1,4 @@
+import { loadArchive, compareDocumentPaths } from "./archive.js";
 import { GRADED_ESSAY_RULE_ID } from "./graded-essay-parser.js";
 import JSZip from "jszip";
 import { normalizeEquationScript } from "./parser.js";
@@ -113,9 +114,9 @@ export function trimAfterLastPageMarker(documentNode) {
 }
 
 export async function inspectTemplateSlots(data) {
-  const zip = await JSZip.loadAsync(data, { checkCRC32: true });
+  const zip = await loadArchive(data);
   const slots = [];
-  const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort();
+  const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort(compareDocumentPaths);
   for (const sectionName of sectionNames) {
     const documentNode = parseXml(await zip.file(sectionName).async("string"), sectionName);
     findSlots(documentNode.documentElement).forEach((slot) => {
@@ -126,8 +127,8 @@ export async function inspectTemplateSlots(data) {
 }
 
 export async function inspectTemplateExplanationMarker(data) {
-  const zip = await JSZip.loadAsync(data, { checkCRC32: true });
-  const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort();
+  const zip = await loadArchive(data);
+  const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort(compareDocumentPaths);
   for (const sectionName of sectionNames) {
     const documentNode = parseXml(await zip.file(sectionName).async("string"), sectionName);
     if (findExplanationMarkers(documentNode.documentElement).length) return true;
@@ -1024,11 +1025,11 @@ export async function validateGeneratedExamHwpx(
     expectEndnoteBlankPageSeparator = false,
   } = {},
 ) {
-  const zip = await JSZip.loadAsync(data, { checkCRC32: true });
+  const zip = await loadArchive(data);
   const errors = [];
   if (!zip.file("mimetype")) errors.push("mimetype 항목이 없습니다.");
 
-  const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort();
+  const sectionNames = Object.keys(zip.files).filter((name) => SECTION_RE.test(name)).sort(compareDocumentPaths);
   if (!sectionNames.length) errors.push("본문 section이 없습니다.");
   const sectionDocuments = [];
   for (const sectionName of sectionNames) {
@@ -1268,8 +1269,8 @@ export async function buildExamFromTemplateHwpx(
   { hideEndnotes = false, hideEndnoteNumbers = false } = {},
 ) {
   if (!selectedOrdinals.length) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
-  const sourceZip = await JSZip.loadAsync(sourceBytes, { checkCRC32: true });
-  const templateZip = await JSZip.loadAsync(templateBytes, { checkCRC32: true });
+  const sourceZip = await loadArchive(sourceBytes);
+  const templateZip = await loadArchive(templateBytes);
   const sourceHeaderEntry = sourceZip.file("Contents/header.xml");
   const templateHeaderEntry = templateZip.file("Contents/header.xml");
   const sourceContentEntry = sourceZip.file("Contents/content.hpf");
@@ -1282,7 +1283,7 @@ export async function buildExamFromTemplateHwpx(
   const templateHeaderDocument = parseXml(await templateHeaderEntry.async("string"), "템플릿 header.xml");
   const sourceContentDocument = parseXml(await sourceContentEntry.async("string"), "문제은행 content.hpf");
   const templateContentDocument = parseXml(await templateContentEntry.async("string"), "템플릿 content.hpf");
-  const templateSectionNames = Object.keys(templateZip.files).filter((name) => SECTION_RE.test(name)).sort();
+  const templateSectionNames = Object.keys(templateZip.files).filter((name) => SECTION_RE.test(name)).sort(compareDocumentPaths);
   if (!templateSectionNames.length) throw new Error("템플릿 본문 section을 찾지 못했습니다.");
 
   const { binaryMap, additions } = await importTemplateBinaryItems(sourceContentDocument, templateZip, templateContentDocument);
@@ -1927,7 +1928,7 @@ export async function buildExamFromSourcesHwpx(
   const orderedSources = [firstSource, ...sources.filter((source) => source !== firstSource)];
   const sourceContexts = new Map();
   for (const source of orderedSources) {
-    const zip = await JSZip.loadAsync(source.bytes, { checkCRC32: true });
+    const zip = await loadArchive(source.bytes);
     const headerEntry = zip.file("Contents/header.xml");
     const contentEntry = zip.file("Contents/content.hpf");
     if (!headerEntry || !contentEntry) throw new Error(`${source.id} 문제은행의 header.xml 또는 content.hpf가 없습니다.`);
@@ -1959,13 +1960,13 @@ export async function buildExamFromSourcesHwpx(
     appendTemplateCollections(outputHeader, context.headerDocument, context.maps, context.fontMaps, context.binaryMap);
   }
 
-  const templateZip = await JSZip.loadAsync(templateBytes, { checkCRC32: true });
+  const templateZip = await loadArchive(templateBytes);
   const templateHeaderEntry = templateZip.file("Contents/header.xml");
   const templateContentEntry = templateZip.file("Contents/content.hpf");
   if (!templateHeaderEntry || !templateContentEntry) throw new Error("템플릿의 header.xml 또는 content.hpf가 없습니다.");
   const templateHeader = parseXml(await templateHeaderEntry.async("string"), "템플릿 header.xml");
   const templateContent = parseXml(await templateContentEntry.async("string"), "템플릿 content.hpf");
-  const templateSectionNames = Object.keys(templateZip.files).filter((name) => SECTION_RE.test(name)).sort();
+  const templateSectionNames = Object.keys(templateZip.files).filter((name) => SECTION_RE.test(name)).sort(compareDocumentPaths);
   if (!templateSectionNames.length) throw new Error("템플릿 본문 section을 찾지 못했습니다.");
   const templateBinaries = await importPackageBinaryItems(outputContent, templateZip, templateContent, "tpl");
   templateBinaries.additions.forEach((bytes, path) => additions.set(path, bytes));

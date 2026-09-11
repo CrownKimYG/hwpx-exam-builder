@@ -1,3 +1,6 @@
+import { createWorkspaceStore, WorkspaceConflictError, WORKSPACE_DRAFT_KEY } from "./workspace-storage.js";
+import { localDateStamp } from "./date-format.js";
+import { loadArchive } from "./archive.js";
 import { compileMixedRules } from "./mixed-generator.js";
 import { readExamHistory, historyUsedCodes, reserveExamHistory, clearExamHistory } from "./exam-history.js";
 import { createExamPreset, applyExamPreset, readExamPresets, writeExamPresets } from "./exam-presets.js";
@@ -265,6 +268,7 @@ function syncBankQuotaTotal() {
 }
 
 function renderBankProfileSummary() {
+  document.querySelectorAll('[data-file-input="files-input"]').forEach(button => { button.hidden = !state.bankProfile; });
   const profile = state.bankProfile;
   const hasFiles = state.files.length > 0;
   elements.bankTitleSeparator.classList.toggle("hidden", !hasFiles);
@@ -470,7 +474,7 @@ async function openCachedBankProfile(profile, { append = false } = {}) {
   state.files.push(...[...newestByPath.values()].map((cachedRecord, index) => {
     const identity = cachedRecord.identity;
     const metadata = parseBankFilename(identity.name);
-    const analysis = hydrateBankAnalysis(cachedRecord.analysis);
+    const analysis = cachedRecord.needsReanalysis ? null : hydrateBankAnalysis(cachedRecord.analysis);
     const saved = openedProfile.fileSettings?.[profileFileSettingKey(identity)] || {};
     return {
       code: String(firstCode + index).padStart(2, "0"),
@@ -497,9 +501,28 @@ async function openCachedBankProfile(profile, { append = false } = {}) {
       cacheNeedsWrite: false,
       processingStatus: analysis ? "cached" : "error",
       processingMessage: analysis ? (cachedRecord.sourceSnapshot?.bytes ? "저장된 원본 사용 가능" : "원본을 한 번 등록하면 다음부터 자동 복원") : "분석 캐시 없음",
-      needsReconnect: !cachedRecord.sourceSnapshot?.bytes,
+      needsReanalysis: cachedRecord.needsReanalysis,
+      needsReconnect: !cachedRecord.sourceSnapshot?.bytes || (cachedRecord.needsReanalysis && !cachedRecord.sourceSnapshot?.sourceBytes),
     };
   }));
+  for (const record of state.files.filter(record => record.bankId === profile.bankId && record.needsReanalysis && !record.needsReconnect)) {
+    setStatus(`${record.file.name} · 개선된 규칙으로 다시 분석 중...`, "loading");
+    try {
+      await processBankRecord(record, { force: true });
+      finishProcessedRecord(record);
+      await cacheProcessedRecord(record);
+      record.needsReanalysis = false;
+    } catch (error) {
+      record.error = error.message;
+      record.processingStatus = "error";
+      record.processingMessage = error.message;
+    }
+  }
+  const bankRecords = state.files.filter(record => record.bankId === profile.bankId);
+  if (cached.some(record => record.needsReanalysis) && bankRecords.every(record => !record.needsReconnect && !record.error && !record.cacheNeedsWrite)) {
+    // Remove old copies only after every replacement has been committed.
+    await pruneBankFileAnalyses(profile.bankId, bankRecords.map(record => fileAnalysisCacheKey(record.bankId, record.identity, record.ruleId))).catch(() => {});
+  }
   elements.bankHome.classList.add("hidden");
   elements.workspace.classList.remove("hidden");
   elements.generationBar.classList.remove("hidden");
@@ -580,14 +603,18 @@ async function renderHomeBankList() {
   renderResumeButton();
 }
 
-const WORKSPACE_DRAFT_KEY = "exam-builder-workspace-v1";
+const workspaceStore = createWorkspaceStore({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) });
 let restoringWorkspace = false;
 function saveWorkspaceDraft() {
+  if (navigator.locks?.request) return navigator.locks.request("exam-builder-workspace", saveWorkspaceDraftUnlocked);
+  return saveWorkspaceDraftUnlocked();
+}
+function saveWorkspaceDraftUnlocked() {
   if (restoringWorkspace || !state.bankProfiles.length) return;
   const saveLabel = document.querySelector("#workspace-save-status");
   if (state.handoffExams.length) { saveLabel.textContent = "인계 작업은 작업 파일로 저장해 보관하세요."; return; }
   try {
-    localStorage.setItem(WORKSPACE_DRAFT_KEY, JSON.stringify({
+    workspaceStore.save({
       bankIds: state.bankProfiles.map((p) => p.bankId),
       files: state.files.map((r) => ({ bankId: r.bankId, path: r.identity.relativePath, code: r.code })),
       quick: state.quick, exams: state.exams, nextExamId: state.nextExamId,
@@ -595,13 +622,19 @@ function saveWorkspaceDraft() {
       showSubjectTitle: elements.showSubjectTitle.checked,
       hideEndnoteNumbers: elements.hideEndnoteNumbers.checked,
       settings: state.settings, mode: elements.quickMode.value, matrixBankId: state.matrixBankId,
-      collapsed: elements.quickBody.classList.contains("hidden"), savedAt: new Date().toISOString(),
-    }));
+      collapsed: elements.quickBody.classList.contains("hidden"),
+    });
     saveLabel.textContent = "작업 자동 저장됨";
-  } catch { saveLabel.textContent = "작업 저장 실패"; setStatus("작업 자동 저장을 하지 못했습니다. 브라우저 저장 공간을 확인해 주세요.", "error"); }
+    document.querySelector("#reload-workspace").classList.add("hidden");
+  } catch (error) {
+    const conflict = error instanceof WorkspaceConflictError;
+    saveLabel.textContent = conflict ? "다른 탭의 최신 작업을 불러와 주세요" : "작업 저장 실패";
+    document.querySelector("#reload-workspace").classList.toggle("hidden", !conflict);
+    setStatus(conflict ? error.message : "작업 자동 저장을 하지 못했습니다. 브라우저 저장 공간을 확인해 주세요.", "error");
+  }
 }
 function readWorkspaceDraft() {
-  try { return JSON.parse(localStorage.getItem(WORKSPACE_DRAFT_KEY)); } catch { return null; }
+  try { return workspaceStore.read(); } catch { return null; }
 }
 function renderResumeButton() {
   const draft = readWorkspaceDraft();
@@ -610,7 +643,9 @@ function renderResumeButton() {
   if (draft?.bankIds?.length) button.textContent = `이전 작업 이어가기 · 은행 ${draft.bankIds.length}개 · 시험지 ${draft.exams?.length || 0}개`;
 }
 async function resumeWorkspace() {
-  const draft = readWorkspaceDraft();
+  let draft;
+  try { draft = workspaceStore.adopt(); }
+  catch (error) { setStatus(`작업 읽기 실패: ${error.message}`, "error"); return; }
   if (!draft?.bankIds?.length) return;
   restoringWorkspace = true;
   const button = document.querySelector("#resume-workspace");
@@ -650,6 +685,7 @@ async function resumeWorkspace() {
     elements.toggleQuick.textContent = draft.collapsed ? "펼치기" : "접기";
     elements.toggleQuick.setAttribute("aria-expanded", String(!draft.collapsed));
     rebuildQuestionIndex(); renderExamDrafts();
+    document.querySelector("#reload-workspace").classList.add("hidden");
     const ready = state.files.find((r) => r.bytes && r.analysis);
     if (ready) void activatePreviewFile(ready.code);
   } catch (error) { setStatus(error.message, "error"); }
@@ -775,13 +811,19 @@ function bindExamPresets() {
 function safeSvg(svgSource, label) {
   const parsed = new DOMParser().parseFromString(svgSource, "image/svg+xml");
   if (parsed.querySelector("parsererror")) throw new Error(`${label} SVG를 읽지 못했습니다.`);
-  parsed.querySelectorAll("script, foreignObject, iframe, object, embed").forEach((node) => node.remove());
+  parsed.querySelectorAll("script, foreignObject, iframe, object, embed, animate, animateMotion, animateTransform, set").forEach((node) => node.remove());
+  const unsafeCss = value => {
+    const css = value.replace(/\/\*[\s\S]*?\*\//g, "");
+    if (/@import|\\|expression\s*\(/i.test(css)) return true;
+    return [...css.matchAll(/url\s*\(([^)]*)\)/gi)].some(([, target]) => !/^#[\w:.-]+$/.test(target.trim().replace(/^["']|["']$/g, "")));
+  };
+  parsed.querySelectorAll("style").forEach(node => { if (unsafeCss(node.textContent)) node.remove(); });
   parsed.querySelectorAll("*").forEach((node) => {
     Array.from(node.attributes).forEach((attribute) => {
       const name = attribute.name.toLowerCase();
       const value = attribute.value.trim().toLowerCase();
-      if (name.startsWith("on")) node.removeAttribute(attribute.name);
-      if ((name === "href" || name.endsWith(":href")) && !value.startsWith("data:") && !value.startsWith("#")) {
+      if (name.startsWith("on") || unsafeCss(value)) node.removeAttribute(attribute.name);
+      if ((name === "href" || name.endsWith(":href")) && !/^data:image\/(?:png|jpeg|gif|webp|bmp);base64,/i.test(value) && !value.startsWith("#")) {
         node.removeAttribute(attribute.name);
       }
     });
@@ -1515,8 +1557,17 @@ function renderQuickMatrix() {
   renderMixedConfig();
   if (!state.bankProfiles.some((p) => p.bankId === state.matrixBankId)) state.matrixBankId = state.bankProfiles[0]?.bankId || null;
   elements.matrixTabs.replaceChildren(...state.bankProfiles.map((p, index) => {
-    const button = createElement("button", { text: p.displayName, attributes: { type: "button", role: "tab", id: `bank-tab-${index}`, "aria-controls": `bank-panel-${index}`, "aria-selected": String(state.matrixBankId === p.bankId) } });
+    const button = createElement("button", { text: p.displayName, attributes: { type: "button", role: "tab", id: `bank-tab-${index}`, "aria-controls": `bank-panel-${index}`, tabindex: state.matrixBankId === p.bankId ? "0" : "-1", "aria-selected": String(state.matrixBankId === p.bankId) } });
     button.addEventListener("click", () => { state.matrixBankId = p.bankId; renderQuickMatrix(); elements.matrixTabs.querySelector('[aria-selected="true"]')?.focus(); });
+    button.addEventListener("keydown", event => {
+      const directions = { ArrowRight: 1, ArrowLeft: -1, Home: -index, End: state.bankProfiles.length - index - 1 };
+      if (!(event.key in directions)) return;
+      event.preventDefault();
+      const next = (index + directions[event.key] + state.bankProfiles.length) % state.bankProfiles.length;
+      state.matrixBankId = state.bankProfiles[next].bankId;
+      renderQuickMatrix();
+      elements.matrixTabs.querySelector('[aria-selected="true"]')?.focus();
+    });
     return button;
   }));
   const panels = state.bankProfiles.map((profile, index) => {
@@ -1739,7 +1790,9 @@ function renderExamDrafts() {
       validateExamDrafts();
       scheduleQuickEstimate();
     });
-    const validation = createElement("p", { className: "exam-validation", attributes: { "data-validation-for": exam.id } });
+    const validation = createElement("p", { className: "exam-validation", attributes: { "data-validation-for": exam.id, id: `exam-validation-${exam.id}`, "aria-live": "polite" } });
+    textarea.setAttribute("aria-describedby", validation.id);
+    textarea.setAttribute("aria-invalid", "false");
     const order = createElement("details", {className:"exam-order"});
     order.append(createElement("summary", {text:"번호별 은행 · 난이도"}));
     const orderList=createElement("ol");
@@ -1763,6 +1816,8 @@ function validateExamDrafts() {
   let valid = Boolean(state.exams.length && state.questions.length);
   state.exams.forEach((exam, examIndex) => {
     const output = elements.examList.querySelector(`[data-validation-for="${exam.id}"]`);
+    const field = output?.parentElement.querySelector("textarea");
+    field?.setAttribute("aria-invalid", "false");
     try {
       const codes = examCodes(exam);
       if (!codes.length) throw new Error("문항 코드를 한 개 이상 입력하세요.");
@@ -1793,6 +1848,7 @@ function validateExamDrafts() {
     } catch (error) {
       valid = false;
       if (output) {
+        field?.setAttribute("aria-invalid", "true");
         output.className = "exam-validation error";
         output.textContent = error.message;
       }
@@ -1865,7 +1921,7 @@ async function getDefaultTemplateBytes() {
     templateState.defaultPromise = fetch(DEFAULT_TEMPLATE_URL).then(async (response) => {
       if (!response.ok) throw new Error("내장 빈 템플릿을 불러오지 못했습니다.");
       return new Uint8Array(await response.arrayBuffer());
-    });
+    }).catch(error => { templateState.defaultPromise = null; throw error; });
   }
   return templateState.defaultPromise;
 }
@@ -1900,16 +1956,24 @@ function missingSubjectFor(metadata) {
 
 async function handoffEntriesFromFiles(files) {
   const entries = [];
+  let retainedBytes = 0;
+  const appendEntry = entry => {
+    retainedBytes += entry.bytes.byteLength;
+    if (retainedBytes > 256 * 1024 * 1024 || entries.length >= 100) throw new Error("인계 파일은 최대 100개, 총 256MB까지 가져올 수 있습니다.");
+    entries.push(entry);
+  };
   for (const file of files) {
+    if (file.size > 256 * 1024 * 1024) throw new Error("파일 크기가 허용 범위를 초과합니다.");
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (/\.hwpx$/i.test(file.name)) {
-      entries.push({ name: file.name, bytes });
+      appendEntry({ name: file.name, bytes });
       continue;
     }
     if (!/\.zip$/i.test(file.name)) continue;
-    const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+    const zip = await loadArchive(bytes);
     for (const name of Object.keys(zip.files).filter((path) => /\.hwpx$/i.test(path) && !zip.files[path].dir)) {
-      entries.push({ name: name.split("/").at(-1), bytes: await zip.file(name).async("uint8array") });
+      if (retainedBytes + zip.file(name)._data.uncompressedSize > 256 * 1024 * 1024 || entries.length >= 100) throw new Error("인계 파일은 최대 100개, 총 256MB까지 가져올 수 있습니다.");
+      appendEntry({ name: name.split("/").at(-1), bytes: await zip.file(name).async("uint8array") });
     }
   }
   return entries.sort((left, right) => left.name.localeCompare(right.name, "ko", { numeric: true }));
@@ -2224,7 +2288,7 @@ async function buildAllExams() {
       outputs.forEach((output) => zip.file(output.filename, output.bytes));
       const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
       ensureBuildActive(build);
-      downloadBlob(blob, `시험지_${state.exams.length}개_${new Date().toISOString().slice(0, 10)}.zip`);
+      downloadBlob(blob, `시험지_${state.exams.length}개_${localDateStamp()}.zip`);
     }
     setBuildStatus(`${state.exams.length}부 · 결과 파일 ${outputs.length}개 검증 및 다운로드 완료`);
   } catch (error) {
@@ -2245,6 +2309,22 @@ function syncSettingsFromControls() {
 }
 
 function bindEvents() {
+  document.querySelectorAll("[data-file-input]").forEach(button => {
+    button.addEventListener("click", () => document.getElementById(button.dataset.fileInput).click());
+  });
+  const outputOptions = document.querySelector(".output-options");
+  const outputTrigger = outputOptions.querySelector("summary");
+  const closeOutputOptions = (returnFocus = true) => {
+    outputOptions.open = false;
+    if (returnFocus) outputTrigger.focus();
+  };
+  document.querySelector("#close-output-options").addEventListener("click", () => closeOutputOptions());
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && outputOptions.open) { event.preventDefault(); closeOutputOptions(); }
+  });
+  document.addEventListener("click", event => {
+    if (outputOptions.open && !outputOptions.contains(event.target)) closeOutputOptions(false);
+  });
   elements.newBankInput.addEventListener("change", async () => {
     const files = [...elements.newBankInput.files]; elements.newBankInput.value = "";
     await addBankFiles(files, { newBank: true });
@@ -2391,7 +2471,11 @@ bindExamPresets();
 bindExamHistory();
 document.querySelector("#resume-workspace").addEventListener("click", resumeWorkspace);
 for (const eventName of ["input", "change", "click"]) document.addEventListener(eventName, () => { window.setTimeout(saveWorkspaceDraft, 0); });
-window.addEventListener("pagehide", saveWorkspaceDraft);
+// Edits are saved as they happen. An old tab must never save on close.
+window.addEventListener("storage", event => {
+  if (event.key === WORKSPACE_DRAFT_KEY && state.bankProfiles.length) void saveWorkspaceDraft();
+});
+document.querySelector("#reload-workspace").addEventListener("click", resumeWorkspace);
 renderExamDrafts();
 renderBankProfileSummary();
 void renderHomeBankList();

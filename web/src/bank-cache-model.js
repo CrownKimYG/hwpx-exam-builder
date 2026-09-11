@@ -7,7 +7,7 @@ import {
 } from "./bank-model.js";
 
 export const BANK_CACHE_SCHEMA_VERSION = 3;
-export const BANK_ANALYSIS_VERSION = 2;
+export const BANK_ANALYSIS_VERSION = 3;
 export const AUTO_BANK_RULE_ID = "auto";
 export const DEFAULT_BANK_RULE_ID = "macro-endnote-v1";
 export const EBSI_KOREAN_RULE_ID = "ebsi-korean-v1";

@@ -1,3 +1,4 @@
+import { loadArchive, compareDocumentPaths } from "./archive.js";
 import JSZip from "jszip";
 
 const FIELD_TYPE = "CLICK_HERE";
@@ -85,10 +86,10 @@ function applyInputStyle(text, beginNode) {
 }
 
 export async function inspectTemplateFields(data) {
-  const zip = await JSZip.loadAsync(data, { checkCRC32: true });
+  const zip = await loadArchive(data);
   const sectionNames = Object.keys(zip.files)
     .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
-    .sort();
+    .sort(compareDocumentPaths);
   const grouped = new Map();
 
   for (const sectionName of sectionNames) {
@@ -161,11 +162,11 @@ async function repackHwpx(zip, overrides) {
 }
 
 export async function applyTemplateFieldValues(data, values) {
-  const zip = await JSZip.loadAsync(data, { checkCRC32: true });
+  const zip = await loadArchive(data);
   const overrides = new Map();
   const sectionNames = Object.keys(zip.files)
     .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
-    .sort();
+    .sort(compareDocumentPaths);
 
   for (const sectionName of sectionNames) {
     const documentNode = parseXml(await zip.file(sectionName).async("string"), sectionName);

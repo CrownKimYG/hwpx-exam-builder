@@ -1,4 +1,4 @@
-import JSZip from "jszip";
+import { loadArchive } from "./archive.js";
 
 const SECTION_RE = /^Contents\/section(\d+)\.xml$/;
 
@@ -19,7 +19,7 @@ function sectionNames(zip) {
 }
 
 export async function renumberEndnotesHwpx(bytes, startAt = 1) {
-  const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  const zip = await loadArchive(bytes);
   let number = startAt - 1;
   for (const name of sectionNames(zip)) {
     const documentNode = parseXml(await zip.file(name).async("string"), name);
@@ -43,7 +43,7 @@ export async function renumberEndnotesHwpx(bytes, startAt = 1) {
 }
 
 export async function removeEndnotesHwpx(bytes) {
-  const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  const zip = await loadArchive(bytes);
   for (const name of sectionNames(zip)) {
     const documentNode = parseXml(await zip.file(name).async("string"), name);
     descendants(documentNode.documentElement, "endNote").forEach((note) => note.remove());
@@ -69,7 +69,7 @@ function emptyPageBreakParagraph(documentNode, prototype) {
 }
 
 export async function insertCompletelyBlankPageBeforeEndnotesHwpx(bytes) {
-  const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  const zip = await loadArchive(bytes);
   const names = sectionNames(zip);
   let target = null;
   for (const name of names) {
@@ -144,7 +144,7 @@ function blankSectionFrom(sourceDocument) {
 }
 
 export async function appendCompletelyBlankPageHwpx(bytes) {
-  const zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  const zip = await loadArchive(bytes);
   const names = sectionNames(zip);
   const lastName = names.at(-1);
   const contentEntry = zip.file("Contents/content.hpf");

@@ -1,10 +1,10 @@
+import { loadArchive, compareDocumentPaths } from "./archive.js";
 import JSZip from "jszip";
 import { difficultyFromLabel } from "./bank-model.js";
 import { coverZocboWatermark } from "./image-watermark.js";
 
 const TITLE_RE = /❙\s*(예제|유제|기초연습|기본연습|실력완성)\s*(\d+)\s*(유사유형)?/;
 const DIFFICULTY_RE = /(예제|유제|기초(?:연습)?|기본(?:연습)?|실력(?:완성)?)/;
-const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const WATERMARK_MARKER_RE = /(?:족보닷컴(?:\s*\(\s*zocbo\.com\s*\))?|zocbo\.com)/i;
 const WATERMARK_PREFIX_RE = /(?:\s+from\s*)?(?:={20,}\s*)?$/i;
 
@@ -103,13 +103,6 @@ export function hasRenderableElementContent(element, { skipNotes = true } = {}) 
   )));
 }
 
-function trimmedQuestionContentEnd(children, start, end) {
-  const contentFlags = children.map((element) => (
-    hasRenderableElementContent(element, { skipNotes: true })
-  ));
-  return findTrimmedContentEnd(contentFlags, start, end);
-}
-
 export function findTrimmedContentEnd(contentFlags, start = 0, end = contentFlags.length) {
   let trimmedEnd = end;
   while (trimmedEnd > start && !contentFlags[trimmedEnd - 1]) trimmedEnd -= 1;
@@ -179,7 +172,7 @@ export async function prepareHwpxForPreview(data) {
 }
 
 export async function sanitizeHwpxWatermarks(data) {
-  const zip = await JSZip.loadAsync(data);
+  const zip = await loadArchive(data);
   await cleanZipWatermarkXml(zip);
 
   await coverZipImageWatermarks(zip);
@@ -215,15 +208,13 @@ async function coverZipImageWatermarks(zip) {
 }
 
 export async function parseHwpx(file) {
+  if (file.size > 256 * 1024 * 1024) throw new Error("파일 크기가 허용 범위를 초과합니다.");
   if (!file.name.toLowerCase().endsWith(".hwpx")) throw new Error(".hwpx 파일만 사용할 수 있습니다.");
   const data = await file.arrayBuffer();
-  const zip = await JSZip.loadAsync(data, { checkCRC32: true });
-  const entries = Object.values(zip.files).filter((entry) => !entry.dir);
-  const totalSize = entries.reduce((sum, entry) => sum + (entry._data?.uncompressedSize || 0), 0);
-  if (totalSize > MAX_UNCOMPRESSED_BYTES) throw new Error("압축 해제 크기가 허용 범위를 초과합니다.");
+  const zip = await loadArchive(data);
   const sectionNames = Object.keys(zip.files)
     .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
-    .sort();
+    .sort(compareDocumentPaths);
   if (!sectionNames.length) throw new Error("본문 section XML을 찾을 수 없습니다.");
 
   const questions = [];
@@ -234,6 +225,19 @@ export async function parseHwpx(file) {
     if (parseError) throw new Error(`XML 파싱 오류: ${parseError.textContent}`);
     const root = documentNode.documentElement;
     const children = Array.from(root.children);
+    const texts = [];
+    const contentFlags = [];
+    const precedingDifficulty = [];
+    let lastDifficulty = "";
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      const text = plainText(child, { skipNotes: true });
+      texts.push(text);
+      contentFlags.push(hasRenderableElementContent(child, { skipNotes: true }));
+      precedingDifficulty.push(lastDifficulty);
+      lastDifficulty = text.match(DIFFICULTY_RE)?.[1] || lastDifficulty;
+      if (i % 100 === 99) await new Promise(resolve => setTimeout(resolve, 0));
+    }
     const anchors = children
       .map((child, index) => ({ index, child, note: rootListEndnote(child) }))
       .filter((item) => item.note);
@@ -241,7 +245,7 @@ export async function parseHwpx(file) {
       const lowerBound = position > 0 ? anchors[position - 1].index + 1 : 0;
       let title = null;
       for (let candidate = index - 1; candidate >= lowerBound; candidate -= 1) {
-        const match = plainText(children[candidate], { skipNotes: true }).match(TITLE_RE);
+        const match = texts[candidate].match(TITLE_RE);
         if (match) {
           title = {
             start: candidate,
@@ -254,14 +258,7 @@ export async function parseHwpx(file) {
           break;
         }
       }
-      let difficultyLabel = "";
-      for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
-        const match = plainText(children[candidate], { skipNotes: true }).match(DIFFICULTY_RE);
-        if (match) {
-          difficultyLabel = match[1];
-          break;
-        }
-      }
+      const difficultyLabel = precedingDifficulty[index];
       const fallback = {
         start: index,
         contentStart: index,
@@ -279,19 +276,18 @@ export async function parseHwpx(file) {
     });
 
     for (let position = 0; position < anchors.length; position += 1) {
+      if (position % 50 === 49) await new Promise(resolve => setTimeout(resolve, 0));
       const { index: anchorIndex, child: anchor, note } = anchors[position];
       const meta = metadata[position];
       let end = position + 1 < metadata.length ? metadata[position + 1].start : children.length;
+      // A page or section break is layout, not a question boundary. Only an
+      // explicit end marker may terminate the last source question.
       if (position + 1 === metadata.length) {
-        const trailingBoundary = children.findIndex((child, childIndex) => {
-          if (childIndex <= anchorIndex) return false;
-          if (child.getAttribute("pageBreak") === "1") return true;
-          return Boolean(firstDescendant(child, "secPr"));
-        });
-        if (trailingBoundary >= 0) end = trailingBoundary;
+        const marker = texts.findIndex((text, i) => i > anchorIndex && /^(?:빠른\s*정답|정답\s*및\s*해설|마지막 페이지입니다\.)$/.test(text.trim()));
+        if (marker >= 0) end = marker;
       }
       const contentStart = Math.min(meta.contentStart, end);
-      const contentEnd = trimmedQuestionContentEnd(children, contentStart, end);
+      const contentEnd = findTrimmedContentEnd(contentFlags, contentStart, end);
       const copyElements = children.slice(contentStart, contentEnd);
       const questionElements = copyElements
         .map(withoutEndnotes)
@@ -490,7 +486,7 @@ export async function buildExamHwpx(sourceBytes, questions, selectedOrdinals, te
   const selected = new Set(selectedOrdinals);
   if (!selected.size) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
 
-  const zip = await JSZip.loadAsync(sourceBytes, { checkCRC32: true });
+  const zip = await loadArchive(sourceBytes);
   const overrides = new Map();
   const headerEntry = zip.file("Contents/header.xml");
   if (!headerEntry) throw new Error("Contents/header.xml을 찾을 수 없습니다.");
@@ -500,7 +496,7 @@ export async function buildExamHwpx(sourceBytes, questions, selectedOrdinals, te
   overrides.set("Contents/header.xml", new XMLSerializer().serializeToString(headerDocument));
   const sectionNames = Object.keys(zip.files)
     .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
-    .sort();
+    .sort(compareDocumentPaths);
 
   for (const sectionName of sectionNames) {
     const ranges = questions
