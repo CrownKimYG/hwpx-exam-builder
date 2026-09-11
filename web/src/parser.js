@@ -1,4 +1,4 @@
-import { removeSourceHeadersAndFooters } from "./source-preprocess.js";
+import { preprocessSourceContent, sourceSolutionBannerIds } from "./source-preprocess.js";
 import { loadArchive, compareDocumentPaths } from "./archive.js";
 import JSZip from "jszip";
 import { difficultyFromLabel } from "./bank-model.js";
@@ -499,10 +499,13 @@ export async function buildExamHwpx(sourceBytes, questions, selectedOrdinals, te
     .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
     .sort(compareDocumentPaths);
 
+  const contentEntry = zip.file("Contents/content.hpf");
+  const contentDocument = contentEntry ? new DOMParser().parseFromString(await contentEntry.async("string"), "application/xml") : null;
+  const bannerIds = contentDocument ? await sourceSolutionBannerIds(zip, contentDocument) : new Set();
   for (const sectionName of sectionNames) {
     const sourceDocument = new DOMParser().parseFromString(await zip.file(sectionName).async("string"), "application/xml");
     if (sourceDocument.querySelector("parsererror")) throw new Error(`${sectionName} XML을 다시 조립하지 못했습니다.`);
-    removeSourceHeadersAndFooters(sourceDocument);
+    preprocessSourceContent(sourceDocument, bannerIds);
     overrides.set(sectionName, new XMLSerializer().serializeToString(sourceDocument));
     const ranges = questions
       .filter((question) => question.sectionName === sectionName)

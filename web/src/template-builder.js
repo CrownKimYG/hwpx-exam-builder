@@ -1,4 +1,4 @@
-import { removeSourceHeadersAndFooters } from "./source-preprocess.js";
+import { preprocessSourceContent, sourceSolutionBannerIds } from "./source-preprocess.js";
 import { loadArchive, compareDocumentPaths } from "./archive.js";
 import { GRADED_ESSAY_RULE_ID } from "./graded-essay-parser.js";
 import JSZip from "jszip";
@@ -480,6 +480,7 @@ function updateSectionsInContent(sourceContentDocument, sectionNames) {
 }
 
 function removeLayoutControls(element) {
+  preprocessSourceContent(element);
   descendants(element, "secPr").forEach((node) => node.remove());
   descendants(element, "colPr").forEach((node) => node.remove());
   // linesegarray caches coordinates for the source page. Once a paragraph is
@@ -508,6 +509,7 @@ function removeLayoutControls(element) {
 }
 
 function prepareMacroCopyElement(element, { preserveLineLayout = false } = {}) {
+  preprocessSourceContent(element);
   descendants(element, "secPr").forEach((node) => node.remove());
   descendants(element, "colPr").forEach((node) => node.remove());
   // 한/글의 복사·붙여넣기처럼 대상 문서에서 줄 위치만 다시 계산한다.
@@ -1287,10 +1289,11 @@ export async function buildExamFromTemplateHwpx(
   sourceHeaderDocument.documentElement.setAttribute("secCnt", String(templateSectionNames.length));
   const masterPages = await templateMasterPages(sourceContentDocument, templateZip, templateContentDocument, maps, fontMaps, binaryMap);
 
+  const bannerIds = await sourceSolutionBannerIds(sourceZip, sourceContentDocument);
   const sourceSectionDocuments = new Map();
   for (const sectionName of new Set(questions.map((question) => question.sectionName))) {
     const entry = sourceZip.file(sectionName);
-    if (entry) sourceSectionDocuments.set(sectionName, removeSourceHeadersAndFooters(parseXml(await entry.async("string"), sectionName)));
+    if (entry) sourceSectionDocuments.set(sectionName, preprocessSourceContent(parseXml(await entry.async("string"), sectionName), bannerIds));
   }
 
   const selectedQuestions = selectedOrdinals
@@ -1821,6 +1824,7 @@ function solutionParagraphs(question, targetDocument, context, outputIndex, tran
   const answer = targetDocument.importNode(question.answerElement, true);
   const explanation = (question.explanationElements || []).map((element) => targetDocument.importNode(element, true));
   const result = [answer, ...explanation];
+  result.forEach(paragraph => preprocessSourceContent(paragraph, context.bannerIds));
   if (transformMode !== "original" && question.answerType === "multiple_choice") {
     const wrapper = targetDocument.createElement("wrapper");
     const note = targetDocument.createElement("endNote");
@@ -1927,14 +1931,15 @@ export async function buildExamFromSourcesHwpx(
     if (!headerEntry || !contentEntry) throw new Error(`${source.id} 문제은행의 header.xml 또는 content.hpf가 없습니다.`);
     const headerDocument = parseXml(await headerEntry.async("string"), `${source.id} header.xml`);
     const contentDocument = parseXml(await contentEntry.async("string"), `${source.id} content.hpf`);
+    const bannerIds = await sourceSolutionBannerIds(zip, contentDocument);
     const sectionDocuments = new Map();
     const neededSections = new Set(selectedQuestions.filter((question) => question.fileCode === source.id).map((question) => question.sectionName));
     for (const sectionName of neededSections) {
       const entry = zip.file(sectionName);
       if (!entry) throw new Error(`${source.id}의 ${sectionName}을 찾지 못했습니다.`);
-      sectionDocuments.set(sectionName, removeSourceHeadersAndFooters(parseXml(await entry.async("string"), `${source.id} ${sectionName}`)));
+      sectionDocuments.set(sectionName, preprocessSourceContent(parseXml(await entry.async("string"), `${source.id} ${sectionName}`), bannerIds));
     }
-    sourceContexts.set(source.id, { source, zip, headerDocument, contentDocument, sectionDocuments, ...emptyReferenceMaps() });
+    sourceContexts.set(source.id, { source, zip, headerDocument, contentDocument, sectionDocuments, bannerIds, ...emptyReferenceMaps() });
   }
 
   const foundation = sourceContexts.get(firstSource.id);
