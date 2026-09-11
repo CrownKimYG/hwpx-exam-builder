@@ -98,7 +98,7 @@ function canonicalSlots(records) {
   return [...byNumber.values()].sort((left, right) => left.number - right.number);
 }
 
-function trimAfterLastPageMarker(documentNode) {
+export function trimAfterLastPageMarker(documentNode) {
   const root = documentNode.documentElement;
   const children = Array.from(root.children);
   const markerIndex = children.findIndex((child) => (
@@ -2063,6 +2063,9 @@ export async function buildExamFromSourcesHwpx(
     );
   } else {
     explanationRecords.forEach((record) => record.element.remove());
+    // The initial trim preserves the explanation placeholder and its surrounding paragraphs.
+    // Once that placeholder is omitted, discard the deferred template tail as well.
+    templateSections.forEach((documentNode) => trimAfterLastPageMarker(documentNode));
   }
   fitTemplateObjects([...templateSections.values()], outputHeader, copiedRoots);
   if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()], visibleMarkers);

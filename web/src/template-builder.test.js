@@ -8,6 +8,7 @@ import {
   hasCompleteChoiceSet,
   isQuestionNumberCandidateText,
   ownParagraphText,
+  trimAfterLastPageMarker,
   rewriteEssayPromptText,
 } from "./template-builder.js";
 
@@ -103,4 +104,35 @@ test("셀 간격을 고정하고 병합으로 가려진 열 경계도 보정한�
   assert.equal(fittedTableCells([], 0, 0, 10000), null);
   assert.equal(fittedTableCells([], 2, 10000, 0), null);
   assert.equal(fittedTableCells([], NaN, 10000, 20000), null);
+});
+
+
+test("해설 표식을 제외한 뒤 마지막 페이지 뒤의 빈 문단을 정리한다", () => {
+  const root = { children: [] };
+  const paragraph = (text) => {
+    const p = { localName: "p", parentElement: root };
+    const t = { textContent: text, parentElement: p };
+    p.getElementsByTagNameNS = (_, name) => name === "t" ? [t] : [];
+    p.remove = () => { root.children = root.children.filter(child => child !== p); };
+    return p;
+  };
+  const wrapper = (text) => {
+    const p = paragraph(text);
+    const get = p.getElementsByTagNameNS;
+    // A section child can contain a nested explanation paragraph.
+    const child = { getElementsByTagNameNS: (_, name) => name === "p" ? [p] : get(_, name) };
+    child.remove = () => { root.children = root.children.filter(node => node !== child); };
+    return child;
+  };
+  const marker = paragraph("마지막 페이지입니다.");
+  const explanation = wrapper("#해설");
+  root.children = [paragraph("문제 본문"), marker, paragraph(""), explanation, paragraph("")];
+  const documentNode = { documentElement: root };
+  assert.equal(trimAfterLastPageMarker(documentNode), 0);
+  assert.equal(root.children.length, 5);
+  explanation.remove();
+  assert.equal(trimAfterLastPageMarker(documentNode), 2);
+  assert.equal(root.children.length, 2);
+  assert.equal(root.children.at(-1), marker);
+  assert.equal(trimAfterLastPageMarker(documentNode), 0);
 });
