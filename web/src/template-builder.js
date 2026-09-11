@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import { normalizeEquationScript } from "./parser.js";
 import { SUTEUK_SHORT_ESSAY_PREPROCESS_MODE } from "./suteuk-short-essay-parser.js";
 import { fitTemplateObjects } from "./template-layout.js";
+import { createQuestionTypographyNormalizer } from "./question-typography.js";
 
 const SECTION_RE = /^Contents\/section\d+\.xml$/;
 const MASTER_PAGE_RE = /^Contents\/masterpage[^/]*\.xml$/i;
@@ -1340,6 +1341,7 @@ export async function buildExamFromTemplateHwpx(
 
   const visibleMarkers = new Set();
   const copiedRoots = new Set();
+  const normalizeQuestionTypography = createQuestionTypographyNormalizer(sourceHeaderDocument);
   const cloneQuestion = (question, targetDocument, outputIndex) => {
     const sourceDocument = sourceSectionDocuments.get(question.sectionName);
     if (!sourceDocument) throw new Error(`${question.sectionName} 원문을 찾지 못했습니다.`);
@@ -1401,6 +1403,7 @@ export async function buildExamFromTemplateHwpx(
     }
   }
 
+  normalizeQuestionTypography([...copiedRoots]);
   fitTemplateObjects([...templateSections.values()], sourceHeaderDocument, copiedRoots);
   if (hideEndnotes) {
     hideEndnoteFormatting(sourceHeaderDocument, [...templateSections.values()], hideEndnoteNumbers
@@ -2000,6 +2003,7 @@ export async function buildExamFromSourcesHwpx(
 
   const visibleMarkers = new Set();
   const copiedRoots = new Set();
+  const normalizeQuestionTypography = createQuestionTypographyNormalizer(outputHeader);
   const cloneQuestion = (
     question,
     targetDocument,
@@ -2133,6 +2137,7 @@ export async function buildExamFromSourcesHwpx(
     // Once that placeholder is omitted, discard the deferred template tail as well.
     templateSections.forEach((documentNode) => trimAfterLastPageMarker(documentNode));
   }
+  normalizeQuestionTypography([...copiedRoots]);
   fitTemplateObjects([...templateSections.values()], outputHeader, copiedRoots);
   if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()], hideEndnoteNumbers
     ? new Set([...templateSections.values()].flatMap(doc => descendants(doc.documentElement, "endNote"))) : visibleMarkers);
