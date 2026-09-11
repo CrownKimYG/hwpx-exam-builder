@@ -1810,6 +1810,10 @@ function renderTemplateFields(fields) {
   const controls = fields.map((field) => {
     const label = createElement("label", { className: "field-control" });
     const caption = createElement("span", { text: `${FIELD_LABELS[field.name] || field.name} · ${field.count}곳` });
+    if (field.name === "title") {
+      label.append(caption, createElement("span", { text: "각 시험지 이름 자동 입력" }));
+      return label;
+    }
     const input = createElement("input", { attributes: { type: field.name === "time" || QUESTION_COUNT_FIELDS.has(field.name) ? "number" : "text" } });
     const placeholder = /\{\{[^{}]+\}\}/.test(field.placeholder || "") ? "" : field.placeholder || "";
     input.value = placeholder;

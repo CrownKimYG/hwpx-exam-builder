@@ -69,6 +69,21 @@ function flattenField(beginNode, endNode) {
   if (endControl && endControl !== beginControl) endControl.remove();
 }
 
+function applyInputStyle(text, beginNode) {
+  const style = closestNamedAncestor(beginNode, "run")?.getAttribute("charPrIDRef");
+  const run = closestNamedAncestor(text, "run");
+  if (style == null || !run || run.getAttribute("charPrIDRef") === style) return;
+  // A run can also contain surrounding text or another field. Style only the
+  // replacement, using the field's insertion point rather than its prompt.
+  const replacement = run.cloneNode(false);
+  replacement.setAttribute("charPrIDRef", style);
+  const tail = run.cloneNode(false);
+  while (text.nextSibling) tail.appendChild(text.nextSibling);
+  replacement.appendChild(text);
+  run.parentNode.insertBefore(replacement, run.nextSibling);
+  if (tail.hasChildNodes()) run.parentNode.insertBefore(tail, replacement.nextSibling);
+}
+
 export async function inspectTemplateFields(data) {
   const zip = await JSZip.loadAsync(data, { checkCRC32: true });
   const sectionNames = Object.keys(zip.files)
@@ -107,6 +122,7 @@ function applyFieldsInParagraph(paragraph, values) {
         || range.textNodes[0]
         || ensureFieldTextNode(paragraph, beginNode, range.endNode);
       if (!firstText) throw new Error(`${name} 누름틀의 입력 영역을 찾지 못했습니다.`);
+      applyInputStyle(firstText, beginNode);
       firstText.textContent = value;
       range.textNodes.forEach((text) => {
         if (text !== firstText) text.textContent = "";
