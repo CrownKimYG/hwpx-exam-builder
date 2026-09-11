@@ -200,7 +200,9 @@ function fitTable(table, width, available) {
 /** Fit copied objects only; keep the template's own frames and master pages. */
 export function fitTemplateObjects(sectionDocuments, headerDocument, copiedRoots) {
   const styles = new Map(descendants(headerDocument, "paraPr").map((style) => [style.getAttribute("id"), style]));
+  let endnoteWidth = null;
   const visit = (node, containerWidth, copied = false, resizedContainer = false) => {
+    if (name(node) === "endNote" && endnoteWidth) containerWidth = endnoteWidth;
     copied ||= copiedRoots.has(node);
     const tag = name(node);
     if (["secPr", "colPr", "container", "pic"].includes(tag)) return false;
@@ -220,6 +222,18 @@ export function fitTemplateObjects(sectionDocuments, headerDocument, copiedRoots
         }
       }
       return resized;
+    }
+    if (tag === "equation" && copied) {
+      const size = child(node, "sz");
+      const oldWidth = number(size, "width");
+      const target = Math.floor(width - horizontalMargins(child(node, "outMargin")));
+      if (size && target > 0 && oldWidth > target) {
+        const factor = target / oldWidth;
+        size.setAttribute("width", String(target));
+        size.setAttribute("height", String(Math.max(1, Math.round(number(size, "height") * factor))));
+        node.setAttribute("baseUnit", String(Math.max(1, Math.round(number(node, "baseUnit", 1000) * factor))));
+        return true;
+      }
     }
     if (tag === "rect") {
       normalizeCurrentShapeSize(node);
@@ -245,7 +259,8 @@ export function fitTemplateObjects(sectionDocuments, headerDocument, copiedRoots
     return resized;
   };
 
-  for (const document of sectionDocuments) {
+  const layouts = sectionDocuments.map((document) => {
+    const paragraphs = [];
     let page = null;
     let columns = null;
     // Read only body controls, never a table cell's or note's local controls.
@@ -265,7 +280,15 @@ export function fitTemplateObjects(sectionDocuments, headerDocument, copiedRoots
         columnWidths: columns?.getAttribute("sameSz") === "0" ? children(columns, "colSz").map((column) => number(column, "width")) : [],
       });
       // Missing page metadata is not permission to invent an A4 layout.
-      if (width) visit(paragraph, width);
+      if (width) paragraphs.push({ paragraph, width });
     }
+    return { document, paragraphs, finalWidth: paragraphs.at(-1)?.width };
+  });
+  const finalDocumentWidth = layouts.at(-1)?.finalWidth;
+  for (const { document, paragraphs, finalWidth } of layouts) {
+    const noteProperties = descendants(document.documentElement, "endNotePr")[0];
+    const placement = child(noteProperties, "placement")?.getAttribute("place");
+    endnoteWidth = placement === "END_OF_SECTION" ? finalWidth : finalDocumentWidth;
+    for (const { paragraph, width } of paragraphs) visit(paragraph, width);
   }
 }

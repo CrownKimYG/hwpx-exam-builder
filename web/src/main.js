@@ -108,7 +108,7 @@ const elements = Object.fromEntries([
   "zoom-out", "zoom-fit", "zoom-in", "zoom-label", "toggle-quick", "quick-body", "quick-exam-name", "quick-question-count-label", "quick-question-count",
   "quick-exam-count", "quick-seed", "matrix-wrap", "quick-status", "quick-generate", "add-exam",
     "clear-exams", "exam-list", "template-file", "template-file-name", "output-type",
-    "question-format", "show-subject-title", "save-handoff", "build-exams", "template-fields", "field-grid", "build-status", "cancel-build",
+    "question-format", "show-subject-title", "hide-endnote-numbers", "save-handoff", "build-exams", "template-fields", "field-grid", "build-status", "cancel-build",
     "build-warning-dialog", "build-warning-list",
 ].map((id) => [id.replace(/-([a-z])/g, (_, character) => character.toUpperCase()), document.querySelector(`#${id}`)]));
 
@@ -593,6 +593,7 @@ function saveWorkspaceDraft() {
       quick: state.quick, exams: state.exams, nextExamId: state.nextExamId,
       templateFilename: templateState.filename, templateValues: [...templateState.values],
       showSubjectTitle: elements.showSubjectTitle.checked,
+      hideEndnoteNumbers: elements.hideEndnoteNumbers.checked,
       settings: state.settings, mode: elements.quickMode.value, matrixBankId: state.matrixBankId,
       collapsed: elements.quickBody.classList.contains("hidden"), savedAt: new Date().toISOString(),
     }));
@@ -632,6 +633,7 @@ async function resumeWorkspace() {
       renderTemplateFields([]); elements.templateFileName.textContent = "기본 템플릿";
     }
     elements.showSubjectTitle.checked = !!draft.showSubjectTitle;
+    elements.hideEndnoteNumbers.checked = !!draft.hideEndnoteNumbers;
     state.quick = draft.quick;
     state.exams = draft.exams || [];
     state.nextExamId = draft.nextExamId || 1;
@@ -2038,6 +2040,7 @@ async function assembleExamVariant({ exam, selectedQuestions, variant, transform
     selectedQuestions,
     {
       hideEndnotes: variant === "problem",
+      hideEndnoteNumbers: elements.hideEndnoteNumbers.checked,
       transformMode,
       includeSolutions: variant === "solution",
       useDefaultLayout: useDefaultTemplate || useHandoffTemplate,

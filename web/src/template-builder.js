@@ -837,6 +837,40 @@ function compactHiddenEndnote(note) {
   descendants(note, "linesegarray").forEach((node) => node.remove());
 }
 
+// Isolate controls so hiding a note marker never hides its question or solution text.
+export function hideEndnoteNumberFormatting(headerDocument, sectionDocuments) {
+  const visibility = charStyleVisibilityMapper(headerDocument);
+  if (!visibility) throw new Error("미주번호 숨김용 글자 서식을 찾지 못했습니다.");
+  const hideControl = (control) => {
+    let run = control.parentElement;
+    while (run && localName(run) !== "run") run = run.parentElement;
+    if (!run) return;
+    const hiddenRun = run.cloneNode(false);
+    hiddenRun.setAttribute("charPrIDRef", visibility.styleId(run.getAttribute("charPrIDRef"), true));
+    let content = control;
+    let parent = control.parentElement;
+    const oldParents = [];
+    while (parent !== run) {
+      oldParents.push(parent);
+      const wrapper = parent.cloneNode(false);
+      wrapper.appendChild(content);
+      content = wrapper;
+      parent = parent.parentElement;
+    }
+    hiddenRun.appendChild(content);
+    run.parentElement.insertBefore(hiddenRun, run);
+    oldParents.forEach((node) => { if (!node.children.length && !node.textContent) node.remove(); });
+    if (!run.children.length) run.remove();
+  };
+  for (const documentNode of sectionDocuments) {
+    for (const note of descendants(documentNode.documentElement, "endNote")) {
+      descendants(note, "autoNum").filter((node) => node.getAttribute("numType") === "ENDNOTE").forEach(hideControl);
+      hideControl(note);
+    }
+  }
+  visibility.finish();
+}
+
 function hideEndnoteFormatting(headerDocument, sectionDocuments, visibleMarkers = new Set()) {
   const visibility = charStyleVisibilityMapper(headerDocument);
   if (!visibility) throw new Error("미주 숨김용 글자 서식을 추가할 charProperties를 찾지 못했습니다.");
@@ -1223,7 +1257,7 @@ export async function buildExamFromTemplateHwpx(
   templateBytes,
   questions,
   selectedOrdinals,
-  { hideEndnotes = false } = {},
+  { hideEndnotes = false, hideEndnoteNumbers = false } = {},
 ) {
   if (!selectedOrdinals.length) throw new Error("시험지에 넣을 문항을 한 개 이상 선택하세요.");
   const sourceZip = await JSZip.loadAsync(sourceBytes, { checkCRC32: true });
@@ -1362,8 +1396,10 @@ export async function buildExamFromTemplateHwpx(
 
   fitTemplateObjects([...templateSections.values()], sourceHeaderDocument, copiedRoots);
   if (hideEndnotes) {
-    hideEndnoteFormatting(sourceHeaderDocument, [...templateSections.values()], visibleMarkers);
+    hideEndnoteFormatting(sourceHeaderDocument, [...templateSections.values()], hideEndnoteNumbers
+      ? new Set([...templateSections.values()].flatMap(doc => descendants(doc.documentElement, "endNote"))) : visibleMarkers);
   }
+  if (hideEndnoteNumbers) hideEndnoteNumberFormatting(sourceHeaderDocument, [...templateSections.values()]);
 
   pruneUnusedReferenceItems(
     sourceHeaderDocument,
@@ -1859,6 +1895,7 @@ export async function buildExamFromSourcesHwpx(
   selectedQuestions,
   {
     hideEndnotes = false,
+    hideEndnoteNumbers = false,
     transformMode = "original",
     includeSolutions = false,
     useDefaultLayout = false,
@@ -2003,7 +2040,7 @@ export async function buildExamFromSourcesHwpx(
       throw new Error(`${question.code}의 정리된 문제 본문이 비어 있습니다.`);
     }
     if (isSuteukQuestion(question)) numberSuteukMarkers(questionClones, outputIndex, visibleMarkers);
-    const numberedParagraph = isSuteukQuestion(question) ? null : writeQuestionNumber(questionClones, outputIndex);
+    const numberedParagraph = isSuteukQuestion(question) && !hideEndnoteNumbers ? null : writeQuestionNumber(questionClones, outputIndex);
     remapCloneReferences(clones, context);
     if (question.copyMode !== "root-endnote-block") {
       ensureLeftParagraphStyles(outputHeader, clones, {
@@ -2088,7 +2125,9 @@ export async function buildExamFromSourcesHwpx(
     templateSections.forEach((documentNode) => trimAfterLastPageMarker(documentNode));
   }
   fitTemplateObjects([...templateSections.values()], outputHeader, copiedRoots);
-  if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()], visibleMarkers);
+  if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()], hideEndnoteNumbers
+    ? new Set([...templateSections.values()].flatMap(doc => descendants(doc.documentElement, "endNote"))) : visibleMarkers);
+  if (hideEndnoteNumbers) hideEndnoteNumberFormatting(outputHeader, [...templateSections.values()]);
   pruneUnusedReferenceItems(outputHeader, [...templateSections.values(), ...masterPages.values()]);
 
   updateSectionsInContent(outputContent, templateSectionNames);
