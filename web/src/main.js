@@ -2077,6 +2077,7 @@ async function verifyExamVariant(bytes, {
     expectHiddenEndnotes: variant === "problem",
     expectHiddenEndnoteMarkers: !selectedQuestions.some((q) => q.ruleId === SUTEUK_SHORT_ESSAY_RULE_ID),
     preserveOriginalContent: true,
+    expectEndnoteBlankPageSeparator: expectedBlankPageIndex !== null,
   });
   await rhwpReady;
   const documentNode = new HwpDocument(bytes);

@@ -9,6 +9,7 @@ import {
   isQuestionNumberCandidateText,
   ownParagraphText,
   trimAfterLastPageMarker,
+  isEndnoteBlankPageSeparator,
   rewriteEssayPromptText,
 } from "./template-builder.js";
 
@@ -135,4 +136,23 @@ test("해설 표식을 제외한 뒤 마지막 페이지 뒤의 빈 문단을 �
   assert.equal(root.children.length, 2);
   assert.equal(root.children.at(-1), marker);
   assert.equal(trimAfterLastPageMarker(documentNode), 0);
+});
+
+
+test("양면 인쇄용 미주 앞 빈 페이지는 정확히 두 개의 빈 페이지 나눔만 허용한다", () => {
+  const p = ({ text = "", pageBreak = "1", object = null } = {}) => ({
+    localName: "p",
+    getAttribute: (name) => name === "pageBreak" ? pageBreak : null,
+    getElementsByTagNameNS: (_, name) => name === "t"
+      ? [{ localName: "t", textContent: text }]
+      : [{ localName: "run" }, { localName: "t", textContent: text }, ...(object ? [{ localName: object }] : [])],
+  });
+  assert.equal(isEndnoteBlankPageSeparator([p(), p()]), true);
+  assert.equal(isEndnoteBlankPageSeparator([p()]), false);
+  assert.equal(isEndnoteBlankPageSeparator([p(), p(), p()]), false);
+  assert.equal(isEndnoteBlankPageSeparator([p(), p({ pageBreak: "0" })]), false);
+  assert.equal(isEndnoteBlankPageSeparator([p(), p({ text: "남은 본문" })]), false);
+  for (const object of ["equation", "pic", "tbl", "endNote", "ctrl"]) {
+    assert.equal(isEndnoteBlankPageSeparator([p(), p({ object })]), false);
+  }
 });

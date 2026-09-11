@@ -952,6 +952,15 @@ async function createOutputZip(sourceZip, overrides, additions, sectionNames, ke
   });
 }
 
+export function isEndnoteBlankPageSeparator(paragraphs) {
+  return paragraphs.length === 2 && paragraphs.every((paragraph) => (
+    localName(paragraph) === "p"
+    && paragraph.getAttribute("pageBreak") === "1"
+    && !textOf(paragraph)
+    && descendants(paragraph, "*").every((node) => ["run", "t"].includes(localName(node)))
+  ));
+}
+
 export async function validateGeneratedExamHwpx(
   data,
   {
@@ -963,6 +972,7 @@ export async function validateGeneratedExamHwpx(
     expectHiddenEndnotes = false,
     expectHiddenEndnoteMarkers = true,
     preserveOriginalContent = false,
+    expectEndnoteBlankPageSeparator = false,
   } = {},
 ) {
   const zip = await JSZip.loadAsync(data, { checkCRC32: true });
@@ -1000,7 +1010,9 @@ export async function validateGeneratedExamHwpx(
     const explanationIndex = children.findIndex((child, index) => (
       index > markerIndex && textOf(child) === "해설"
     ));
-    if (markerIndex >= 0 && markerIndex + 1 < children.length && explanationIndex < 0) {
+    const expectedSeparator = expectEndnoteBlankPageSeparator
+      && isEndnoteBlankPageSeparator(children.slice(markerIndex + 1));
+    if (markerIndex >= 0 && markerIndex + 1 < children.length && explanationIndex < 0 && !expectedSeparator) {
       const tailSummary = children.slice(markerIndex + 1).map((child) => textOf(child).replace(/\s+/g, " ").slice(0, 100) || "(빈 문단)").join(" / ");
       errors.push(`마지막 페이지 표시 뒤에 문단 ${children.length - markerIndex - 1}개가 남았습니다. 남은 내용: ${tailSummary}`);
     }
