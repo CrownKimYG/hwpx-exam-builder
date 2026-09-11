@@ -1001,7 +1001,8 @@ export async function validateGeneratedExamHwpx(
       index > markerIndex && textOf(child) === "해설"
     ));
     if (markerIndex >= 0 && markerIndex + 1 < children.length && explanationIndex < 0) {
-      errors.push(`마지막 페이지 표시 뒤에 문단 ${children.length - markerIndex - 1}개가 남았습니다.`);
+      const tailSummary = children.slice(markerIndex + 1).map((child) => textOf(child).replace(/\s+/g, " ").slice(0, 100) || "(빈 문단)").join(" / ");
+      errors.push(`마지막 페이지 표시 뒤에 문단 ${children.length - markerIndex - 1}개가 남았습니다. 남은 내용: ${tailSummary}`);
     }
   });
 
