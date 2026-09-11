@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import { JSDOM } from 'jsdom';
-import { applyTemplateFieldValues } from './template-fields.js';
+import { applyTemplateFieldValues, examTemplateValues } from './template-fields.js';
 const window = new JSDOM('').window;
 globalThis.DOMParser = window.DOMParser;
 globalThis.XMLSerializer = window.XMLSerializer;
@@ -33,4 +33,20 @@ test('empty fields inherit the insertion style', async () => {
   const doc = await fill(`<p><run charPrIDRef="input">${begin('a','title')}</run><run charPrIDRef="input">${end('a')}</run></p>`, {title:'제목'});
   assert.equal(doc.querySelector('t').parentElement.getAttribute('charPrIDRef'),'input');
   assert.equal(doc.querySelector('t').textContent,'제목');
+});
+
+
+test('empty question-count field preserves the adjacent total label in nested template tables', async () => {
+  const doc = await fill(`<p><run><tbl><tr><tc><subList><p><run charPrIDRef="input"><t>총 </t>${begin('n','test_questions_count')}${end('n')}<t>문항</t></run></p></subList></tc></tr></tbl></run></p>`, {test_questions_count:12});
+  assert.equal([...doc.querySelectorAll('t')].map(t=>t.textContent).join(''), '총 12문항');
+});
+
+
+test('question count explicitly entered as 13 is not overwritten by 8 selected questions', async () => {
+  for (const name of ['test_questions_count', 'quest_count']) {
+    const values = examTemplateValues([[name, '13']], '시험지', 8);
+    const doc = await fill(`<p><run>${begin('count',name)}<t>{{count}}</t>${end('count')}</run></p>`, values);
+    assert.equal(doc.querySelector('t').textContent, '13');
+    assert.equal(examTemplateValues([[name, '']], '시험지', 8)[name], '8');
+  }
 });

@@ -100,19 +100,6 @@ function canonicalSlots(records) {
   return [...byNumber.values()].sort((left, right) => left.number - right.number);
 }
 
-export function trimAfterLastPageMarker(documentNode) {
-  const root = documentNode.documentElement;
-  const children = Array.from(root.children);
-  const markerIndex = children.findIndex((child) => (
-    textOf(child).replace(/\s+/g, "").includes("마지막페이지입니다")
-  ));
-  if (markerIndex < 0) return 0;
-  const trailing = children.slice(markerIndex + 1);
-  if (trailing.some((child) => findSlots(child).length || findExplanationMarkers(child).length)) return 0;
-  trailing.forEach((child) => child.remove());
-  return trailing.length;
-}
-
 export async function inspectTemplateSlots(data) {
   const zip = await loadArchive(data);
   const slots = [];
@@ -1073,21 +1060,6 @@ export async function validateGeneratedExamHwpx(
   if (remainingExplanationMarkers.length) {
     errors.push(`치환되지 않은 #해설 표식이 ${remainingExplanationMarkers.length}개 남았습니다.`);
   }
-  sectionDocuments.forEach((documentNode) => {
-    const children = Array.from(documentNode.documentElement.children);
-    const markerIndex = children.findIndex((child) => (
-      textOf(child).replace(/\s+/g, "").includes("마지막페이지입니다")
-    ));
-    const explanationIndex = children.findIndex((child, index) => (
-      index > markerIndex && textOf(child) === "해설"
-    ));
-    const expectedSeparator = expectEndnoteBlankPageSeparator
-      && isEndnoteBlankPageSeparator(children.slice(markerIndex + 1));
-    if (markerIndex >= 0 && markerIndex + 1 < children.length && explanationIndex < 0 && !expectedSeparator) {
-      const tailSummary = children.slice(markerIndex + 1).map((child) => textOf(child).replace(/\s+/g, " ").slice(0, 100) || "(빈 문단)").join(" / ");
-      errors.push(`마지막 페이지 표시 뒤에 문단 ${children.length - markerIndex - 1}개가 남았습니다. 남은 내용: ${tailSummary}`);
-    }
-  });
 
   const endnotes = sectionDocuments.flatMap((documentNode) => descendants(documentNode.documentElement, "endNote"));
   if (endnotes.length !== expectedEndnoteCount) {
@@ -1333,7 +1305,6 @@ export async function buildExamFromTemplateHwpx(
   const templateSections = new Map();
   for (const sectionName of templateSectionNames) {
     const documentNode = parseXml(await templateZip.file(sectionName).async("string"), sectionName);
-    trimAfterLastPageMarker(documentNode);
     remapReferences(documentNode.documentElement, maps, fontMaps, binaryMap);
     findSlots(documentNode.documentElement).forEach((slot) => {
       allSlotRecords.push({ sectionName, ...slot, documentNode });
@@ -2003,7 +1974,6 @@ export async function buildExamFromSourcesHwpx(
   const templateSections = new Map();
   for (const sectionName of templateSectionNames) {
     const documentNode = parseXml(await templateZip.file(sectionName).async("string"), sectionName);
-    trimAfterLastPageMarker(documentNode);
     remapReferences(documentNode.documentElement, templateMaps, templateFontMaps, templateBinaries.binaryMap);
     findSlots(documentNode.documentElement).forEach((slot) => allSlotRecords.push({ sectionName, ...slot, documentNode }));
     findSequentialMarkers(documentNode.documentElement).forEach((element) => sequentialRecords.push({ sectionName, element, documentNode }));
@@ -2161,10 +2131,16 @@ export async function buildExamFromSourcesHwpx(
       normalizeQuestionTypography,
     );
   } else {
-    explanationRecords.forEach((record) => record.element.remove());
-    // The initial trim preserves the explanation placeholder and its surrounding paragraphs.
-    // Once that placeholder is omitted, discard the deferred template tail as well.
-    templateSections.forEach((documentNode) => trimAfterLastPageMarker(documentNode));
+    // Preserve the template's solution cover, blank pages and all trailing content.
+    // Native endnotes already contain the solutions; keep their destination page.
+    explanationRecords.forEach((record) => {
+      clearSlotMarker(record.element);
+      if (includeSolutions) {
+        descendants(record.documentNode.documentElement, "endNotePr").forEach((properties) => {
+          descendants(properties, "placement").forEach(node => node.setAttribute("beneathText", "1"));
+        });
+      }
+    });
   }
   fitTemplateObjects([...templateSections.values()], outputHeader, copiedRoots);
   if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()], hideEndnoteNumbers

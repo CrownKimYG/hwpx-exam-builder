@@ -19,7 +19,7 @@ import {
   normalizeBankFile,
   repairConvertedHwpxBinData,
 } from "./hwp-converter.js";
-import { applyTemplateFieldValues, inspectTemplateFields } from "./template-fields.js";
+import { applyTemplateFieldValues, inspectTemplateFields, examTemplateValues } from "./template-fields.js";
 import {
   buildExamFromSourcesHwpx,
   inspectTemplateExplanationMarker,
@@ -1927,11 +1927,7 @@ async function getDefaultTemplateBytes() {
 }
 
 function templateValuesFor(exam, questionCount) {
-  const values = Object.fromEntries(templateState.values.entries());
-  values.title = exam.title;
-  values.test_questions_count = String(questionCount);
-  values.quest_count = String(questionCount);
-  return values;
+  return examTemplateValues(templateState.values.entries(), exam.title, questionCount);
 }
 
 function sanitizeFilename(value) {
@@ -2248,8 +2244,9 @@ async function buildAllExams() {
       let problemBytes = await assembleExamVariant({ exam, selectedQuestions, variant: "problem", transformMode, build });
       const problemOutputPages = await pageCountFor(problemBytes);
       const problemContentPages = await pageCountFor(await removeEndnotesHwpx(problemBytes));
-      const problemOutputNeedsBlankPage = problemOutputPages % 2 === 1;
-      const solutionNeedsBlankPage = problemContentPages % 2 === 1;
+      const explicitSolutionSlot = Boolean(templateState.bytes && await inspectTemplateExplanationMarker(templateState.bytes));
+      const problemOutputNeedsBlankPage = !explicitSolutionSlot && problemOutputPages % 2 === 1;
+      const solutionNeedsBlankPage = !explicitSolutionSlot && problemContentPages % 2 === 1;
       if (problemOutputNeedsBlankPage) problemBytes = await appendCompletelyBlankPageHwpx(problemBytes);
       for (const variant of variants) {
         setBuildStatus(`${examIndex + 1}/${state.exams.length} · ${exam.title} ${variant === "problem" ? "문제지" : "해설 포함"} 생성 중...`);

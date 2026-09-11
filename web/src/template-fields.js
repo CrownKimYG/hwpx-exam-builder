@@ -55,11 +55,11 @@ function ensureFieldTextNode(paragraph, beginNode, endNode) {
   const beginRun = closestNamedAncestor(beginNode, "run");
   const endRun = closestNamedAncestor(endNode, "run");
   if (!beginRun || !endRun || beginRun.parentNode !== endRun.parentNode) return null;
-  const run = beginRun.cloneNode(false);
   const prefix = beginRun.prefix || "hp";
   const text = paragraph.ownerDocument.createElementNS(beginRun.namespaceURI, `${prefix}:t`);
-  run.appendChild(text);
-  endRun.parentNode.insertBefore(run, endRun);
+  let endControl = endNode;
+  while (endControl.parentNode !== endRun) endControl = endControl.parentNode;
+  endRun.insertBefore(text, endControl);
   return text;
 }
 
@@ -111,7 +111,7 @@ export async function inspectTemplateFields(data) {
 
 function applyFieldsInParagraph(paragraph, values) {
   descendants(paragraph, "fieldBegin")
-    .filter((node) => node.getAttribute("type") === FIELD_TYPE)
+    .filter((node) => node.getAttribute("type") === FIELD_TYPE && closestNamedAncestor(node, "p") === paragraph)
     .forEach((beginNode) => {
       const name = (beginNode.getAttribute("name") || "").trim();
       if (!Object.prototype.hasOwnProperty.call(values, name)) return;
@@ -119,7 +119,6 @@ function applyFieldsInParagraph(paragraph, values) {
       const range = fieldRange(paragraph, beginNode);
       const existingText = range.textNodes.find((text) => (text.textContent || "").trim());
       const firstText = existingText
-        || ((range.previousTextNode?.textContent || "").trim() ? range.previousTextNode : null)
         || range.textNodes[0]
         || ensureFieldTextNode(paragraph, beginNode, range.endNode);
       if (!firstText) throw new Error(`${name} 누름틀의 입력 영역을 찾지 못했습니다.`);
@@ -175,4 +174,14 @@ export async function applyTemplateFieldValues(data, values) {
   }
 
   return repackHwpx(zip, overrides);
+}
+
+
+export function examTemplateValues(entries, title, questionCount) {
+  const values = Object.fromEntries(entries);
+  values.title = title;
+  for (const name of ["test_questions_count", "quest_count"]) {
+    if (!String(values[name] ?? "").trim()) values[name] = String(questionCount);
+  }
+  return values;
 }
