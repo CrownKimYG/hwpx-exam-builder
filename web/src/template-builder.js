@@ -1375,6 +1375,8 @@ export async function buildExamFromTemplateHwpx(
     if (question.copyMode !== "root-endnote-block") {
       ensureLeftParagraphStyles(sourceHeaderDocument, clones);
     }
+    // Normalize before the destination slot donates any template controls.
+    normalizeQuestionTypography(clones);
     clones.forEach((clone) => copiedRoots.add(clone));
     return clones;
   };
@@ -1403,7 +1405,6 @@ export async function buildExamFromTemplateHwpx(
     }
   }
 
-  normalizeQuestionTypography([...copiedRoots]);
   fitTemplateObjects([...templateSections.values()], sourceHeaderDocument, copiedRoots);
   if (hideEndnotes) {
     hideEndnoteFormatting(sourceHeaderDocument, [...templateSections.values()], hideEndnoteNumbers
@@ -1854,6 +1855,7 @@ function addSolutionsAppendix(
   outputHeader,
   transformMode,
   copiedRoots,
+  normalizeQuestionTypography,
 ) {
   let targetRecord = explanationRecords[0] || null;
   explanationRecords.slice(targetRecord ? 1 : 0).forEach((record) => clearSlotMarker(record.element));
@@ -1889,6 +1891,7 @@ function addSolutionsAppendix(
     // Explanation equations are frequently taller than the surrounding text.
     // A wider minimum prevents the renderer from stacking adjacent lines.
     ensureLeftParagraphStyles(outputHeader, paragraphs, { minimumLineSpacingPercent: 220 });
+    normalizeQuestionTypography(paragraphs);
     paragraphs.forEach((paragraph) => {
       copiedRoots.add(paragraph);
       parent.insertBefore(paragraph, insertionPoint);
@@ -2064,6 +2067,9 @@ export async function buildExamFromSourcesHwpx(
         removeHeadingElements: new Set([numberedParagraph]),
       });
     }
+    // Only imported question/embedded solution content is eligible. Template
+    // slot controls and fixed content have not been attached at this point.
+    normalizeQuestionTypography(clones);
     clones.forEach((clone) => copiedRoots.add(clone));
     return clones;
   };
@@ -2130,6 +2136,7 @@ export async function buildExamFromSourcesHwpx(
       outputHeader,
       transformMode,
       copiedRoots,
+      normalizeQuestionTypography,
     );
   } else {
     explanationRecords.forEach((record) => record.element.remove());
@@ -2137,7 +2144,6 @@ export async function buildExamFromSourcesHwpx(
     // Once that placeholder is omitted, discard the deferred template tail as well.
     templateSections.forEach((documentNode) => trimAfterLastPageMarker(documentNode));
   }
-  normalizeQuestionTypography([...copiedRoots]);
   fitTemplateObjects([...templateSections.values()], outputHeader, copiedRoots);
   if (hideEndnotes) hideEndnoteFormatting(outputHeader, [...templateSections.values()], hideEndnoteNumbers
     ? new Set([...templateSections.values()].flatMap(doc => descendants(doc.documentElement, "endNote"))) : visibleMarkers);
