@@ -1,3 +1,5 @@
+import { createRubricNormalizer } from "./rubric-layout.js";
+
 // HWPUNITs, not screen pixels. Resolve widths after insertion so that template
 // columns and enclosing template cells (rather than the source page) win.
 const name = (node) => node.localName || node.nodeName.split(":").pop();
@@ -200,6 +202,7 @@ function fitTable(table, width, available) {
 /** Fit copied objects only; keep the template's own frames and master pages. */
 export function fitTemplateObjects(sectionDocuments, headerDocument, copiedRoots) {
   const styles = new Map(descendants(headerDocument, "paraPr").map((style) => [style.getAttribute("id"), style]));
+  const normalizeRubric = createRubricNormalizer(headerDocument, styles);
   let endnoteWidth = null;
   const visit = (node, containerWidth, copied = false, resizedContainer = false) => {
     if (name(node) === "endNote" && endnoteWidth) containerWidth = endnoteWidth;
@@ -210,7 +213,7 @@ export function fitTemplateObjects(sectionDocuments, headerDocument, copiedRoots
     let resized = false;
     if (tag === "tbl") {
       const target = Math.floor(width - horizontalMargins(child(node, "outMargin")));
-      if (copied && target > 0) resized = fitTable(node, target, width);
+      if (copied && target > 0) resized = normalizeRubric(node, target) || fitTable(node, target, width);
       for (const cell of tableCells(node)) {
         const cellSize = number(child(cell, "cellSz"), "width");
         const margin = cell.getAttribute("hasMargin") === "1" ? child(cell, "cellMargin") : child(node, "inMargin");
