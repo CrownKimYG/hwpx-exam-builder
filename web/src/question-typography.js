@@ -53,7 +53,10 @@ export function createQuestionTypographyNormalizer(header) {
       const old=Number(node.getAttribute('baseUnit')) || size;
       const box=child(node,'sz');
       if(box)for(const dimension of ['width','height'])box.setAttribute(dimension,String(Math.round(Number(box.getAttribute(dimension))*size/old)));
-      node.setAttribute('baseUnit',String(size));node.setAttribute('font','HancomEQN');
+      node.setAttribute('baseUnit',String(size));
+      // The stored box was measured with the source equation font. Changing
+      // font without remeasuring it can leave too little room for following text.
+      if (!node.getAttribute('font')?.trim()) node.setAttribute('font','HancomEQN');
       child(node,'pos')?.setAttribute('affectLSpacing','1');
     }
     if(tag==='p') [...node.children].filter(n=>name(n)==='linesegarray').forEach(n=>n.remove());

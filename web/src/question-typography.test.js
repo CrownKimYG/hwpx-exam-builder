@@ -15,8 +15,22 @@ test('문제·미주 해설의 원본 글꼴과 수식 크기를 통일하고 �
  assert.equal(d.querySelector('#template run').getAttribute('charPrIDRef'),'0');
  assert.equal(d.querySelector('[charPrIDRef="2"]').textContent,'1');
  assert.equal(d.querySelector('equation').getAttribute('baseUnit'),'1000');
+ assert.equal(d.querySelector('equation').getAttribute('font'),'HYhwpEQ');
  assert.equal(d.querySelector('sz').getAttribute('width'),'2000');
  assert.equal(d.querySelector('script').textContent,'x^2=4');
  assert.equal(d.querySelectorAll('linesegarray').length,0);
  const before=new XMLSerializer().serializeToString(d);n([d.querySelector('#copy')]);assert.equal(new XMLSerializer().serializeToString(d),before);
+});
+
+test('한컴 2020 제보 수식은 원본 글꼴과 비례 너비를 함께 유지하고 뒤 한글을 수정하지 않는다',()=>{
+ const h=parse('<head><charProperties itemCnt="1"><charPr id="0" height="900"/></charProperties></head>');
+ const d=parse('<sec><p><run charPrIDRef="0"><equation font="HYhwpEQ" baseUnit="900"><sz width="6666" height="900"/><script>f LEFT ( 2 RIGHT ) + f LEFT ( - 2 RIGHT ) = 50</script></equation><t>일 때, </t></run></p></sec>');
+ const normalize=createQuestionTypographyNormalizer(h);
+ normalize([d.documentElement]);
+ assert.equal(d.querySelector('equation').getAttribute('font'),'HYhwpEQ');
+ assert.equal(d.querySelector('sz').getAttribute('width'),'7407');
+ assert.equal(d.querySelector('t').textContent,'일 때, ');
+ const before=d.documentElement.outerHTML;
+ normalize([d.documentElement]);
+ assert.equal(d.documentElement.outerHTML,before);
 });
