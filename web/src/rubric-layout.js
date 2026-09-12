@@ -131,8 +131,7 @@ export function createRubricNormalizer(header, paragraphStyles) {
           const eqSize = child(equation,'sz');
           if (eqSize) for (const dimension of ['width','height']) eqSize.setAttribute(dimension,String(Math.round(num(eqSize,dimension)*factor)));
           equation.setAttribute('baseUnit',String(RUBRIC_FONT_SIZE));
-          // Keep the font whose metrics produced the stored equation width.
-          if (!equation.getAttribute('font')?.trim()) equation.setAttribute('font','HancomEQN');
+          equation.setAttribute('font','HancomEQN');
           equation.setAttribute('textColor','#000000');
         }
         if (rowIndex > 0 && column === 0) {

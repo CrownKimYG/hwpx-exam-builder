@@ -62,12 +62,3 @@ test('긴 기준 전체의 글자와 수식을 함께 줄여 한 줄 너비 안�
  assert.match(list.textContent,/일 때/);assert.match(list.textContent,/에서/);
  assert.deepEqual([...list.querySelectorAll('script')].map(n=>n.textContent),['a>0','3<a<4']);
 });
-
-test('채점표도 수식 너비에 대응하는 원본 글꼴을 보존하고 누락된 글꼴에만 기본값을 쓴다',()=>{
- const h=header(),d=fixture(),note=d.querySelector('endNote');
- const equations=[...d.querySelectorAll('equation')];
- equations[0].setAttribute('font','HYhwpEQ');
- fitTemplateObjects([d],h,new Set([note]));
- assert.equal(equations[0].getAttribute('font'),'HYhwpEQ');
- assert.equal(equations[1].getAttribute('font'),'HancomEQN');
-});
