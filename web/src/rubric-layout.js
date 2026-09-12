@@ -1,3 +1,5 @@
+import { normalizeRubricCriterion } from './rubric-content.js';
+
 const tag = node => node.localName || node.nodeName.split(':').pop();
 const children = (node, name) => [...(node?.children || [])].filter(n => tag(n) === name);
 const child = (node, name) => children(node, name)[0];
@@ -114,6 +116,7 @@ export function createRubricNormalizer(header, paragraphStyles) {
         for (const side of ['top','bottom']) margin.setAttribute(side,'250');
         const list = child(cell,'subList');
         if (!list) continue;
+        if (rowIndex > 0 && column === 0) normalizeRubricCriterion(list, table);
         list.setAttribute('vertAlign','CENTER');
         list.setAttribute('lineWrap','BREAK');
         list.setAttribute('textWidth',String(Math.max(1,widths[column]-600)));
@@ -130,6 +133,29 @@ export function createRubricNormalizer(header, paragraphStyles) {
           equation.setAttribute('baseUnit',String(RUBRIC_FONT_SIZE));
           equation.setAttribute('font','HancomEQN');
           equation.setAttribute('textColor','#000000');
+        }
+        if (rowIndex > 0 && column === 0) {
+          // Fit the entire criterion, not each equation separately. Keep text
+          // and equations at the same scale without squeezing character gaps.
+          const equations = all(list, 'equation');
+          const equationWidth = equations.reduce((sum, eq) => sum + num(child(eq, 'sz'), 'width'), 0);
+          const equationMargins = equations.reduce((sum, eq) => sum
+            + num(child(eq, 'outMargin'), 'left') + num(child(eq, 'outMargin'), 'right'), 0);
+          const textWidth = all(list, 't').reduce((sum, t) => sum + [...t.textContent].reduce((w, ch) =>
+            w + RUBRIC_FONT_SIZE * (/\s/u.test(ch) ? 0.5 : /[\u0000-\u007f]/u.test(ch) ? 0.75 : 1.05), 0), 0);
+          const available = Math.max(1, widths[column] - 600);
+          const factor = Math.min(1, Math.max(1, available - equationMargins) / Math.max(1, (textWidth + equationWidth) * 1.05));
+          if (factor < 1) {
+            const chars = all(header, 'charProperties')[0];
+            const source = children(chars, 'charPr').find(n => n.getAttribute('id') === styles.normal);
+            const scaled = appendStyle(chars, source, n => n.setAttribute('height', String(Math.max(1, Math.floor(RUBRIC_FONT_SIZE * factor)))));
+            for (const run of all(list, 'run')) run.setAttribute('charPrIDRef', scaled.getAttribute('id'));
+            for (const eq of equations) {
+              eq.setAttribute('baseUnit', String(Math.max(1, Math.floor(RUBRIC_FONT_SIZE * factor))));
+              const box = child(eq, 'sz');
+              if (box) for (const dimension of ['width', 'height']) box.setAttribute(dimension, String(Math.floor(num(box, dimension) * factor)));
+            }
+          }
         }
       }
     }

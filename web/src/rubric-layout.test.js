@@ -47,3 +47,18 @@ test('템플릿 자체 표와 일반 표의 글자 서식은 바꾸지 않는다
  assert.equal(generic.querySelector('tbl run').getAttribute('charPrIDRef'),'1');
  assert.equal(generic.querySelector('equation').getAttribute('baseUnit'),'800');
 });
+
+test('긴 기준 전체의 글자와 수식을 함께 줄여 한 줄 너비 안에 배치한다',()=>{
+ const h=header(),d=fixture(),note=d.querySelector('endNote');
+ const t=d.querySelector('tbl'),list=t.querySelectorAll('tr')[1].querySelector('subList');
+ list.innerHTML=p('<equation baseUnit="1000"><sz width="9000" height="1000"/><outMargin left="56" right="56"/><script>a&gt;0</script></equation><t>일 때 </t>')+p('<equation baseUnit="1000"><sz width="9000" height="1000"/><outMargin left="56" right="56"/><script>3&lt;a&lt;4</script></equation><t>에서 값을 구함</t>');
+ fitTemplateObjects([d],h,new Set([note]));
+ assert.equal(list.children.length,1);
+ assert.equal(list.querySelectorAll('lineBreak').length,0);
+ const styles=new Map([...h.querySelectorAll('charPr')].map(n=>[n.id,n]));
+ const sizes=[...list.querySelectorAll('run')].map(n=>Number(styles.get(n.getAttribute('charPrIDRef')).getAttribute('height')));
+ assert.ok(sizes.every(size=>size<1000 && size>0));
+ assert.ok([...list.querySelectorAll('equation')].every(eq=>Number(eq.getAttribute('baseUnit'))===sizes[0]));
+ assert.match(list.textContent,/일 때/);assert.match(list.textContent,/에서/);
+ assert.deepEqual([...list.querySelectorAll('script')].map(n=>n.textContent),['a>0','3<a<4']);
+});
