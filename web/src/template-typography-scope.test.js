@@ -19,7 +19,7 @@ test('실제 조립에서 템플릿 제목·누름틀 값·고정 문구 서식�
  style.appendChild(th.createElementNS(style.namespaceURI,'hh:bold'));
  template.file('Contents/header.xml',xml(th));
  const controls='<hp:secPr><hp:pagePr width="59528"><hp:margin left="4000" right="4000"/></hp:pagePr></hp:secPr>';
- template.file('Contents/section0.xml',section(p(1,'템플릿 제목')+p(2,'입력된 시험지 이름')+p(3,'#1').replace('<hp:t>',controls+'<hp:t>')+p(4,'고정 문구')+p(5,'마지막 페이지 입니다.')+p(6,'해설 및 채점표').replace('<hp:p ', '<hp:p pageBreak="1" ')+p(7,'#해설').replace('<hp:p ', '<hp:p pageBreak="1" ')));
+ template.file('Contents/section0.xml',section(p(1,'템플릿 제목')+p(2,'입력된 시험지 이름')+p(3,'#1').replace('<hp:t>',controls+'<hp:t>')+p(4,'고정 문구')+p(5,'마지막 페이지 입니다.')+p(6,'해설 및 채점표').replace('<hp:p ', '<hp:p pageBreak="1" ')+p(8,'').replace('<hp:p ', '<hp:p pageBreak="1" ')+p(7,'#해설').replace('<hp:p ', '<hp:p pageBreak="1" ')));
  source.file('Contents/section0.xml',section(p(11,'원본 문제').replace('</hp:run>',`<hp:ctrl><hp:endNote number="1"><hp:subList>${p(12,'[정답] 2')}${p(13,'[해설] 원본 풀이')}</hp:subList></hp:endNote></hp:ctrl></hp:run>`)));
  const cached = await template.file('Contents/section0.xml').async('string');
  template.file('Contents/section0.xml', cached.replaceAll('</hp:p>', '<hp:linesegarray><hp:lineseg textpos="0" vertpos="12345"/></hp:linesegarray></hp:p>'));
@@ -36,7 +36,8 @@ test('실제 조립에서 템플릿 제목·누름틀 값·고정 문구 서식�
   const c=styles.get(t.parentElement.getAttribute('charPrIDRef'));assert.equal(c.getAttribute('height'),'1000');assert.equal(all(c,'bold').length,0);
  }
  assert.ok(all(d,'t').some(t=>t.textContent==='해설 및 채점표'));
- assert.ok(all(d,'p').some(p=>p.getAttribute('id')==='7' && p.getAttribute('pageBreak')==='1'));
+ assert.ok(all(d,'p').some(p=>p.getAttribute('id')==='7' && p.getAttribute('pageBreak')==='0'));
+ assert.ok(all(d,'p').some(p=>p.getAttribute('id')==='8' && p.getAttribute('pageBreak')==='1'));
  assert.equal(all(d,'t').some(t=>t.textContent==='#해설'),false);
  assert.equal(all(d,'linesegarray').length,0,'fixed template content must also lose stale line positions');
  assert.equal(all(d,'pagePr')[0].getAttribute('width'),'59528');

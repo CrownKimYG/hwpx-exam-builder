@@ -779,6 +779,27 @@ function clearSlotMarker(paragraph) {
   descendants(paragraph, "t").forEach((node) => { node.textContent = ""; });
 }
 
+// A blank paragraph may already start the solution page (and carry its
+// columns). Do not start another empty page when consuming #해설.
+export function collapseExplanationPageBreaks(paragraph) {
+  if (localName(paragraph.parentElement) !== "sec") return;
+  const allowed = new Set(["run", "t", "ctrl", "colPr", "colSz", "colLine", "linesegarray", "lineseg"]);
+  const preceding = [];
+  let previous = paragraph.previousElementSibling;
+  while (previous && localName(previous) === "p"
+    && !textOf(previous).trim()
+    && [...previous.getElementsByTagNameNS("*", "*")].every(node => allowed.has(localName(node)))) {
+    preceding.unshift(previous);
+    previous = previous.previousElementSibling;
+  }
+  let hasPageBreak = false;
+  for (const node of [...preceding, paragraph]) {
+    if (node.getAttribute("pageBreak") !== "1") continue;
+    if (hasPageBreak) node.setAttribute("pageBreak", "0");
+    hasPageBreak = true;
+  }
+}
+
 function preserveSlotLayout(slot, clones) {
   const firstParagraph = clones.find((node) => localName(node) === "p");
   const run = firstParagraph && directChildrenByName(firstParagraph, "run")[0];
@@ -1328,7 +1349,10 @@ export async function buildExamFromTemplateHwpx(
     .forEach((slot) => clearSlotMarker(slot.element));
   const sequentialRecord = slotRecords.length ? null : sequentialRecords[0] || null;
   sequentialRecords.slice(sequentialRecord ? 1 : 0).forEach((record) => clearSlotMarker(record.element));
-  explanationRecords.forEach((record) => replaceParagraphText(record.element, "해설"));
+  explanationRecords.forEach((record) => {
+    collapseExplanationPageBreaks(record.element);
+    replaceParagraphText(record.element, "해설");
+  });
   if (!slotRecords.length && !sequentialRecord) {
     throw new Error("템플릿에서 #1 문제 슬롯 또는 {{QUESTIONS}} 연속 삽입 지점을 찾지 못했습니다.");
   }
@@ -2125,6 +2149,7 @@ export async function buildExamFromSourcesHwpx(
   }
 
   const appendixQuestions = selectedQuestions.filter((question) => question.copyMode !== "root-endnote-block");
+  if (includeSolutions) explanationRecords.forEach(record => collapseExplanationPageBreaks(record.element));
   if (includeSolutions && appendixQuestions.length) {
     addSolutionsAppendix(
       templateSections,
