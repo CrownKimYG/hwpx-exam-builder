@@ -1,3 +1,5 @@
+import { separateEquationFromHangul } from './equation-text-spacing.js';
+
 const name = n => n.localName || n.nodeName.split(':').pop();
 const all = (n,t) => [...n.getElementsByTagNameNS('*',t)];
 const child = (n,t) => [...n.children].find(c=>name(c)===t);
@@ -58,6 +60,7 @@ export function createQuestionTypographyNormalizer(header) {
     }
     if(tag==='p') [...node.children].filter(n=>name(n)==='linesegarray').forEach(n=>n.remove());
     [...node.children].forEach(visit);
+    if(tag==='p') separateEquationFromHangul(node);
   }
   return roots=>roots.forEach(visit);
 }

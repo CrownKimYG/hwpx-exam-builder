@@ -1,4 +1,5 @@
 import { normalizeEquationScript } from './parser.js';
+import { separateEquationFromHangul } from './equation-text-spacing.js';
 
 const tag = n => n.localName || n.nodeName.split(':').pop();
 const all = (n, name) => [...n.getElementsByTagNameNS('*', name)];
@@ -89,4 +90,5 @@ export function normalizeRubricCriterion(list, table) {
     p.remove();
   }
   all(first, 'linesegarray').forEach(n => n.remove());
+  separateEquationFromHangul(first);
 }

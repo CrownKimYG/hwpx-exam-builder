@@ -25,7 +25,7 @@ test('수능완성 37번처럼 중간 수식을 생략한 기준에는 해설에
   const solution = eq('a>b')+'<t>일 때 </t>'+eq('M')+eq('=a+b, m')+eq('=0')+'<t>이므로 </t>'+eq('M-m')+eq('=a+b')+eq('=12');
   const {table,list} = fixture(solution,p(eq('a>b'))+p(eq('M-m')+eq('=a+b')+eq('=12')));
   normalizeRubricCriterion(list,table);
-  assert.match(list.textContent,/a>b일 때/);
+  assert.match(list.textContent,/a>b 일 때/);
   assert.equal(list.children.length,1);
 });
 
