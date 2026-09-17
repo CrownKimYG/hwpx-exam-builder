@@ -68,7 +68,9 @@ export function allocateMixedExamSets({questions,rules,examCount,usedCodes=new S
       if(bankLeft[e].some((n,b)=>n>bankSlots[e][b])||rowLeft[e].some((n,r)=>n>rowSlots[e][r])) return false;
     }
     const {e}=demands[best];
-    for(const o of bestOptions) {
+    // The slot's eligible options are shared across exams, but their draw order
+    // must be fresh for each assignment to avoid repeating a unit/difficulty layout.
+    for(const o of shuffle(bestOptions)) {
       assigned[best]=o; remaining[o.gi]--; bankLeft[e][o.bi]--; rowLeft[e][o.ri]--;
       if(search(depth+1)) return true;
       assigned[best]=null; remaining[o.gi]++; bankLeft[e][o.bi]++; rowLeft[e][o.ri]++;

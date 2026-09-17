@@ -7,6 +7,20 @@ const banks=[{bankId:'a',name:'A',count:3},{bankId:'b',name:'B',count:3}];
 const rows=[{count:2,difficulty:'lv1',range:'1-4'},{count:2,difficulty:'lv2',range:'2-5'},{count:2,difficulty:'lv3',range:'3-6'}];
 const questions=['a','b'].flatMap(bankId=>['lv1','lv2','lv3'].flatMap(difficulty=>Array.from({length:10},(_,i)=>({code:`${bankId}-${difficulty}-${i}`,bankId,difficulty,unitKey:'U'}))));
 const byCode=new Map(questions.map(q=>[q.code,q]));
+test('여러 부의 같은 번호에서도 랜덤 단원과 난이도를 새로 추첨한다',()=>{
+ const pool=['U1','U2','U3','U4'].flatMap(unitKey=>['lv1','lv2','lv3'].flatMap(difficulty=>
+  Array.from({length:100},(_,i)=>({code:`${unitKey}-${difficulty}-${i}`,bankId:'a',unitKey,difficulty}))));
+ const lookup=new Map(pool.map(q=>[q.code,q]));
+ const rules=compileMixedRules([{bankId:'a',name:'A',count:4}],[{count:4}]);
+ const run=()=>allocateExamSets({questions:pool,rules,examCount:20,seed:'slot-diversity'});
+ const exams=run();
+ assert.deepEqual(exams,run());
+ assert.equal(new Set(exams.flat()).size,80);
+ for(let slot=0;slot<4;slot++) {
+  assert.ok(new Set(exams.map(exam=>lookup.get(exam[slot]).unitKey)).size>=3,`#${slot+1} 단원 반복`);
+  assert.equal(new Set(exams.map(exam=>lookup.get(exam[slot]).difficulty)).size,3,`#${slot+1} 난이도 반복`);
+ }
+});
 test('전체 번호에 은행 및 난이도별 수량·번호 범위를 함께 만족하며 여러 부 중복 없음',()=>{
  const rules=compileMixedRules(banks,rows);const usedCodes=new Set([questions[0].code]);
  const exams=allocateExamSets({questions,rules,usedCodes,examCount:3,seed:'verify'});
