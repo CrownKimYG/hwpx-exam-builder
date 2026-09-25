@@ -1,4 +1,4 @@
-import { loadArchive, compareDocumentPaths } from "./archive.js";
+import { loadArchive, compareDocumentPaths, copyArchiveEntry } from "./archive.js";
 import JSZip from "jszip";
 
 const FIELD_TYPE = "CLICK_HERE";
@@ -144,8 +144,8 @@ async function repackHwpx(zip, overrides) {
   for (const entry of Object.values(zip.files)) {
     if (entry.dir || entry.name === "mimetype") continue;
     const replacement = overrides.get(entry.name);
-    const content = replacement ?? await entry.async("uint8array");
-    output.file(entry.name, content, {
+    if (replacement == null) { copyArchiveEntry(output, entry); continue; }
+    output.file(entry.name, replacement, {
       binary: replacement == null,
       compression: "DEFLATE",
       date: entry.date,

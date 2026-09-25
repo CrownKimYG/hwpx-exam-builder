@@ -1,5 +1,5 @@
 import { preprocessSourceContent, sourceSolutionBannerIds } from "./source-preprocess.js";
-import { loadArchive, compareDocumentPaths } from "./archive.js";
+import { loadArchive, compareDocumentPaths, copyArchiveEntry } from "./archive.js";
 import { GRADED_ESSAY_RULE_ID } from "./graded-essay-parser.js";
 import JSZip from "jszip";
 import { normalizeEquationScript } from "./parser.js";
@@ -998,7 +998,7 @@ async function createOutputZip(sourceZip, overrides, additions, sectionNames, ke
     if (overrides.has(entry.name)) {
       output.file(entry.name, overrides.get(entry.name), { compression: "DEFLATE" });
     } else {
-      output.file(entry.name, await entry.async("uint8array"), { binary: true, compression: "DEFLATE", date: entry.date });
+      copyArchiveEntry(output, entry);
     }
   }
   // Template paragraphs (including headers, footers and nested tables) retain

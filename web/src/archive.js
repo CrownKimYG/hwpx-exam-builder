@@ -47,6 +47,13 @@ export async function loadArchive(data, { limits = ARCHIVE_LIMITS } = {}) {
   return zip;
 }
 
+// Keep unchanged ZipObjects so JSZip can reuse their compressed payloads.
+// Generation only reads these entries; modifications use zip.file() to replace
+// an entry, never mutate the shared ZipObject or its options.
+export function copyArchiveEntry(output, entry) {
+  if (!entry.dir) output.files[entry.name] = entry;
+}
+
 // HWPX readers identify the package from the first, uncompressed ZIP entry.
 export async function generateHwpxArchive(zip) {
   const mimetype = zip.file("mimetype");
@@ -55,7 +62,7 @@ export async function generateHwpxArchive(zip) {
   output.file("mimetype", await mimetype.async("uint8array"), { compression: "STORE" });
   for (const entry of Object.values(zip.files)) {
     if (entry.dir || entry.name === "mimetype") continue;
-    output.file(entry.name, await entry.async("uint8array"), { compression: "DEFLATE" });
+    copyArchiveEntry(output, entry);
   }
   return output.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 }

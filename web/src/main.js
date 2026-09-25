@@ -1,3 +1,4 @@
+import { prepareExamPagination } from './exam-pagination.js';
 import { latestWorker } from './latest-worker.js';
 import { createWorkspaceStore, WorkspaceConflictError, WORKSPACE_DRAFT_KEY } from "./workspace-storage.js";
 import { localDateStamp } from "./date-format.js";
@@ -2292,18 +2293,18 @@ async function buildAllExams(options = {}) {
     const outputType = elements.outputType.value;
     const transformMode = elements.questionFormat.value;
     const variants = outputType === "both" ? ["problem", "solution"] : [outputType];
+    const explicitSolutionSlot = Boolean(templateState.bytes && await inspectTemplateExplanationMarker(templateState.bytes));
     const questionByCode = new Map(state.questions.map((question) => [question.code, question]));
     for (let examIndex = 0; examIndex < selectedExams.length; examIndex += 1) {
       const exam = selectedExams[examIndex];
       const selectedQuestions = examCodes(exam).map((code) => questionByCode.get(code));
       setBuildStatus(`${examIndex + 1}/${selectedExams.length} · ${exam.title} 문제 영역 확인 중...`);
-      let problemBytes = await assembleExamVariant({ exam, selectedQuestions, variant: "problem", transformMode, build });
-      const problemOutputPages = await pageCountFor(problemBytes);
-      const problemContentPages = await pageCountFor(await removeEndnotesHwpx(problemBytes));
-      const explicitSolutionSlot = Boolean(templateState.bytes && await inspectTemplateExplanationMarker(templateState.bytes));
-      const problemOutputNeedsBlankPage = !explicitSolutionSlot && problemOutputPages % 2 === 1;
-      const solutionNeedsBlankPage = !explicitSolutionSlot && problemContentPages % 2 === 1;
-      if (problemOutputNeedsBlankPage) problemBytes = await appendCompletelyBlankPageHwpx(problemBytes);
+      const { problemBytes, problemContentPages, solutionNeedsBlankPage } = await prepareExamPagination({
+        variants, explicitSolutionSlot,
+        assembleProblem: () => assembleExamVariant({ exam, selectedQuestions, variant: 'problem', transformMode, build }),
+        pageCount: pageCountFor, removeEndnotes: removeEndnotesHwpx, appendBlank: appendCompletelyBlankPageHwpx,
+        check: () => ensureBuildActive(build),
+      });
       for (const variant of variants) {
         setBuildStatus(`${examIndex + 1}/${selectedExams.length} · ${exam.title} ${variant === "problem" ? "문제지" : "해설 포함"} 생성 중...`);
         let bytes = variant === "problem"
