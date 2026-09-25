@@ -544,6 +544,10 @@ input[type="file"][hidden], button[hidden] { display: none !important; }
 .quick-card:has(#quick-body.hidden) > .quick-actions { display: none; }
 
 /* Sequential exam configuration; source preview and output remain separate. */
+html:has(body[data-workspace-screen]) { height:auto; min-height:100%; overflow-y:auto; }
+body[data-workspace-screen] { height:auto; min-height:100vh; overflow:visible; }
+body[data-workspace-screen] .shell { height:auto; min-height:100vh; overflow:visible; }
+body[data-workspace-screen] .workspace, body[data-workspace-screen] .app-grid { flex:0 0 auto; }
 body[data-workspace-screen] .workspace { overflow:visible; }
 body[data-workspace-screen] .app-grid { display:block; min-height:0; }
 body[data-workspace-screen] .builder-panel { display:block; height:auto; overflow:visible; }
@@ -571,7 +575,7 @@ body[data-workspace-screen="draw"] .quick-card { max-width:1000px; margin:0 auto
 .wizard-panel .preset-picker { margin-bottom:24px; }
 .wizard-panel .bank-selection { margin-top:20px; }
 .wizard-panel .matrix-wrap { max-height:none; }
-.wizard-controls { display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--line); padding:20px 24px; }
+.wizard-controls { display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--line); padding:20px 24px; position:sticky; bottom:0; z-index:5; background:white; }
 .wizard-controls button { min-width:90px; }
 .wizard-controls span { font-size:12px; color:var(--text-muted); }
 .wizard-error { color:var(--danger, #aa302a); margin:0 24px 12px; }
