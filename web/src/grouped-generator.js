@@ -143,6 +143,12 @@ export function allocateGroupedExamSets({ questions, rules, examCount, usedCodes
   const deadline = Date.now() + 2500;
   const positioned = rules.positions?.some(predicates => predicates.length);
   let ordered;
+  if (positioned) for (let e = 0; e < examCount; e++) {
+    const eligible = new Set(demands.filter(d => d.e === e).flatMap(d => d.options.map(o => o.pi)));
+    for (const [slot, predicates] of rules.positions.entries()) {
+      if (predicates.length && ![...eligible].some(pi => { const q = pool[pi]; return predicates.some(p => p.subject === q.subject && p.units.includes(q.unitKey) && (!p.difficulty || p.difficulty === q.difficulty)); })) throw new Error(`시험지 ${e + 1} · ${slot + 1}번 조건에 맞는 미사용 문항이 없습니다.`);
+    }
+  }
   function arrange() {
     const arrangements = [];
     for (let e = 0; e < examCount; e++) {
@@ -180,7 +186,10 @@ export function allocateGroupedExamSets({ questions, rules, examCount, usedCodes
     // One random tie per unit, not per question or difficulty group.
     const ties = new Map();
     choices.forEach(o => { const k = unitKey(d, o); if (!ties.has(k)) ties.set(k, random()); });
-    choices = shuffle(choices).sort((a, b) => (localGroup[d.e].get(groupKey(d, a)) || 0) - (localGroup[d.e].get(groupKey(d, b)) || 0)
+    const uncovered = positioned ? rules.positions.filter(predicates => predicates.length && !demands.some((demand, i) => demand.e === d.e && selected[i] && predicates.some(p => { const q = pool[selected[i].pi]; return p.subject === q.subject && p.units.includes(q.unitKey) && (!p.difficulty || p.difficulty === q.difficulty); }))) : [];
+    const priority = option => uncovered.filter(predicates => predicates.some(p => { const q = pool[option.pi]; return p.subject === q.subject && p.units.includes(q.unitKey) && (!p.difficulty || p.difficulty === q.difficulty); })).length;
+    const priorities = new Map(choices.map(o => [o, priority(o)]));
+    choices = shuffle(choices).sort((a, b) => priorities.get(b) - priorities.get(a) || (localGroup[d.e].get(groupKey(d, a)) || 0) - (localGroup[d.e].get(groupKey(d, b)) || 0)
       || (totalGroup.get(groupKey(d, a)) || 0) - (totalGroup.get(groupKey(d, b)) || 0)
       || (totalUnit.get(unitKey(d, a)) || 0) - (totalUnit.get(unitKey(d, b)) || 0)
       || ties.get(unitKey(d, a)) - ties.get(unitKey(d, b)));

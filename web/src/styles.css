@@ -626,3 +626,4 @@ body[data-workspace-screen="draw"] .builder-panel > .exam-list-card { display:no
 .wizard-download .output-options { display: block; margin-top: 24px; }
 .wizard-download .output-options-body { position: static; width: auto; max-width: 100%; max-height: none; box-shadow: none; }
 .wizard-field input, .wizard-field select { max-width: 100%; min-width: 0; }
+.wizard-capacity { position: sticky; top: 0; z-index: 2; padding: 14px 16px; margin: 0 0 20px; border-radius: 8px; background: #edf5f1; color: #285347; font-weight: 600; }

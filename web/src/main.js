@@ -157,6 +157,7 @@ let currentPage = 0;
 let pageCount = 0;
 let previewRequest = 0;
 let estimateTimer = null;
+let capacityWorker = null;
 let measureContext = null;
 let lastMeasuredFont = "";
 let activeBuild = null;
@@ -1672,17 +1673,35 @@ function collectUsedCodes() {
 }
 
 function scheduleQuickEstimate() {
+  capacityWorker?.terminate(); capacityWorker = null;
+  if (examWizard?.capacityVisible()) examWizard.setCapacity('가능 시험지 부수 계산 중…');
   window.clearTimeout(estimateTimer);
   estimateTimer = window.setTimeout(updateQuickEstimate, 120);
 }
 
 function updateQuickEstimate() {
-  if (!state.questions.length) return;
+  if (!state.questions.length) { examWizard?.setCapacity('출제 가능 0부'); return; }
   try {
     const rules = quickRules();
     const disconnected = state.bankProfiles.filter((p) => (rules.kind === "grouped" || Number(state.quick.bankCounts[p.bankId]) > 0) && state.files.some((r) => r.bankId === p.bankId && !r.bytes));
     if (disconnected.length) throw new Error(`${disconnected.map((p) => p.displayName).join(", ")}: 원본 파일을 다시 연결해 주세요.`);
     const usedCodes = collectUsedCodes();
+    if (examWizard?.capacityVisible()) {
+      capacityWorker?.terminate();
+      const worker = new Worker(new URL('./grouped-capacity.worker.js', import.meta.url), { type: 'module' });
+      capacityWorker = worker;
+      examWizard.setCapacity('가능 시험지 부수 계산 중…');
+      worker.onmessage = ({ data }) => {
+        if (capacityWorker !== worker) return;
+        worker.terminate(); capacityWorker = null;
+        examWizard.setCapacity(data.error ? data.error : data.count > 0
+          ? `출제 가능 ${data.count}부${data.limited || data.capped ? ' 이상' : ''} · 단원·번호 기준`
+          : data.limited ? '부수 계산 한도 초과 · 조건을 좁혀 주세요.' : `출제 가능 0부${data.reason ? ' · ' + data.reason : ''}`);
+      };
+      worker.onerror = () => { if (capacityWorker === worker) { worker.terminate(); capacityWorker = null; examWizard.setCapacity('부수 계산 실패 · 설정을 다시 확인하세요.'); } };
+      worker.postMessage({ questions: quickQuestions(), rules, usedCodes, seed: elements.quickSeed.value || 'estimate' });
+      return;
+    }
     if (rules.kind === "mixed" || rules.kind === "grouped") {
       const requested = Number(elements.quickExamCount.value);
       allocateExamSets({questions:quickQuestions(),rules,usedCodes,examCount:requested,seed:elements.quickSeed.value || "estimate"});
@@ -1697,6 +1716,8 @@ function updateQuickEstimate() {
     elements.quickStatus.textContent = `현재 ${quickQuestions().filter((q) => !usedCodes.has(q.code)).length}문항 사용 가능 · 중복 없는 시험지 최대 ${maximum}부`;
     elements.quickGenerate.disabled = maximum < 1 || requested < 1 || requested > maximum;
   } catch (error) {
+    capacityWorker?.terminate(); capacityWorker = null;
+    if (examWizard?.capacityVisible()) examWizard.setCapacity(error.message);
     elements.quickStatus.className = /조건이 없는/.test(error.message) ? "quick-status" : "quick-status error";
     elements.quickStatus.textContent = error.message;
     elements.quickGenerate.disabled = true;

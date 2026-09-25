@@ -33,7 +33,8 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
   const settings = $('.exam-settings'); settings.open = true;
   panels[0].append($('.preset-picker'), $('#exam-preset-status'), settings, mode.closest('.bank-selection'));
   panels[1].append(ratio, $('#bank-quotas'));
-  panels[2].append(groups, automatic, $('#mixed-config'), $('#matrix-tabs'), $('#matrix-wrap'));
+  const capacity = make('p', '', 'wizard-capacity'); capacity.setAttribute('role', 'status');
+  panels[2].append(capacity, groups, automatic, $('#mixed-config'), $('#matrix-tabs'), $('#matrix-wrap'));
   const actions = $('.quick-actions'), history = $('.history-options');
   panels[3].append(review, history, actions);
   const trackViews = [make('div', '', 'wizard-track'), make('div', '', 'wizard-track')];
@@ -189,6 +190,7 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
     $('#quick-question-count').readOnly = !grouped;
     ratio.hidden = !grouped; groups.hidden = !grouped;
     automatic.hidden = mode.value !== 'banks';
+    capacity.hidden = !grouped;
     $('#bank-quotas').classList.toggle('hidden', grouped);
     if (grouped) {
       $('#quick-question-count').value = getState().quick.questionCount;
@@ -296,7 +298,7 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
     next.textContent = paired() ? (step === 3 ? '자연계 →' : step === 4 ? '다운로드 →' : '다음 →') : step === 4 ? '시험지 열기 →' : '다음 →';
     $('#quick-generate').textContent = `${activeTrack() || ''} ${$('#quick-exam-count').value}부 ${ready(activeTrack()) ? '다시 출제' : '출제'}`.trim();
   }
-  function go(nextStep) { step = Math.max(0, Math.min(paired() ? 5 : 4, nextStep)); reached = Math.max(reached, step); getState().quick.wizardStep = step; error.textContent = ''; refresh(); if (step === 3 || (paired() && step === 4)) estimate(); steps.querySelector('[aria-current]')?.focus(); save(); }
+  function go(nextStep) { step = Math.max(0, Math.min(paired() ? 5 : 4, nextStep)); reached = Math.max(reached, step); getState().quick.wizardStep = step; error.textContent = ''; refresh(); if (step === 2 || step === 3 || (paired() && step === 4)) estimate(); steps.querySelector('[aria-current]')?.focus(); save(); }
   function advance() {
     error.textContent = '';
     try {
@@ -320,7 +322,7 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
   mode.addEventListener('change', () => { go(0); changed(); });
   $('#quick-body').addEventListener('input', event => { if (!event.target.closest('.exam-list-card')) { reached = Math.min(reached, 3); renderSteps(); } });
   showScreen('draw'); refresh();
-  return { refresh, config, activeTrack, difficulty() { const t = activeTrack(); return t ? difficultyCounts(getState().quick.series?.[t]?.counts, Number($('#quick-question-count').value)) : null; }, conditions() { showScreen('draw'); go(2); }, generated(count) {
+  return { refresh, config, activeTrack, capacityVisible() { return screen === 'draw' && step === 2 && mode.value === 'grouped'; }, setCapacity(text) { capacity.textContent = text; }, difficulty() { const t = activeTrack(); return t ? difficultyCounts(getState().quick.series?.[t]?.counts, Number($('#quick-question-count').value)) : null; }, conditions() { showScreen('draw'); go(2); }, generated(count) {
       const track = activeTrack();
       if (track) {
         const state = getState();
