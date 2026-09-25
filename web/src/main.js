@@ -1,4 +1,6 @@
 import { createWorkspaceStore, WorkspaceConflictError, WORKSPACE_DRAFT_KEY } from "./workspace-storage.js";
+import { mountExamWizard } from "./exam-wizard.js";
+import { compileGroupedRules } from "./grouped-generator.js";
 import { localDateStamp } from "./date-format.js";
 import { loadArchive } from "./archive.js";
 import { compileMixedRules } from "./mixed-generator.js";
@@ -150,6 +152,7 @@ const templateState = {
 };
 
 let documentViewer = null;
+let examWizard = null;
 let currentPage = 0;
 let pageCount = 0;
 let previewRequest = 0;
@@ -249,10 +252,11 @@ function renderBankQuotas() {
     const edit = createElement("button", { text: "조건", attributes: { type: "button", "aria-label": `${profile.displayName} 조건 설정` } });
     edit.addEventListener("click", () => {
       document.querySelector(".exam-settings").open = false;
-      if (elements.quickMode.value === "mixed") { document.querySelector("#mixed-config").scrollIntoView({block:"nearest"}); return; }
+      if (elements.quickMode.value === "mixed") { examWizard?.conditions(); document.querySelector("#mixed-config").scrollIntoView({block:"nearest"}); return; }
       state.matrixBankId = profile.bankId;
       elements.quickMode.value = "matrix";
       renderBankQuotas(); renderQuickMatrix();
+      examWizard?.conditions();
       elements.matrixTabs.scrollIntoView({ block: "nearest", behavior: "smooth" });
     });
     row.classList.toggle("excluded", Number(input.value) === 0);
@@ -261,9 +265,15 @@ function renderBankQuotas() {
   });
   elements.bankQuotas.replaceChildren(...rows);
   syncBankQuotaTotal();
+  examWizard?.refresh();
 }
 
 function syncBankQuotaTotal() {
+  if (elements.quickMode.value === "grouped") {
+    elements.quickQuestionCount.readOnly = false;
+    elements.quickQuestionCount.value = state.quick.questionCount;
+    return;
+  }
   elements.quickQuestionCount.value = String(state.bankProfiles.reduce((sum, p) => sum + Number(state.quick.bankCounts[p.bankId] || 0), 0));
 }
 
@@ -1639,6 +1649,7 @@ function quickQuestions() {
 }
 
 function quickRules() {
+  if (elements.quickMode.value === "grouped") return compileGroupedRules(examWizard.config(), Number(elements.quickQuestionCount.value));
   const banks = state.bankProfiles.map((p) => ({ bankId: p.bankId, name: p.displayName, count: Number(state.quick.bankCounts[p.bankId] ?? 0) }));
   if (elements.quickMode.value === "mixed") return compileMixedRules(banks.map(b=>({...b,range:state.quick.mixed?.bankRanges?.[b.bankId]})),state.quick.mixed?.rows);
   if (elements.quickMode.value === "banks") return compileBankQuotaRules(banks);
@@ -1669,14 +1680,14 @@ function updateQuickEstimate() {
   if (!state.questions.length) return;
   try {
     const rules = quickRules();
-    const disconnected = state.bankProfiles.filter((p) => Number(state.quick.bankCounts[p.bankId]) > 0 && state.files.some((r) => r.bankId === p.bankId && !r.bytes));
+    const disconnected = state.bankProfiles.filter((p) => (rules.kind === "grouped" || Number(state.quick.bankCounts[p.bankId]) > 0) && state.files.some((r) => r.bankId === p.bankId && !r.bytes));
     if (disconnected.length) throw new Error(`${disconnected.map((p) => p.displayName).join(", ")}: 원본 파일을 다시 연결해 주세요.`);
     const usedCodes = collectUsedCodes();
-    if (rules.kind === "mixed") {
+    if (rules.kind === "mixed" || rules.kind === "grouped") {
       const requested = Number(elements.quickExamCount.value);
       allocateExamSets({questions:quickQuestions(),rules,usedCodes,examCount:requested,seed:elements.quickSeed.value || "estimate"});
       elements.quickStatus.className = "quick-status";
-      elements.quickStatus.textContent = `전체 번호 혼합 · ${rules.size}문항 × ${requested}부 구성 가능`;
+      elements.quickStatus.textContent = `${rules.size}문항 × ${requested}부 구성 가능`;
       elements.quickGenerate.disabled = false;
       return;
     }
@@ -1731,7 +1742,8 @@ function generateWithHistory() {
     updateQuickEstimate();
     setBuildStatus(`${examCount}부가 목록에 추가되었습니다. 확인 후 HWPX를 다운로드하세요.`, "success");
     saveWorkspaceDraft();
-    elements.examList.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    examWizard?.generated(examCount);
+    document.querySelector('#wizard-panel-4')?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   } catch (error) {
     elements.quickStatus.className = "quick-status error";
     elements.quickStatus.textContent = error.message;
@@ -2364,6 +2376,7 @@ function bindEvents() {
     elements.bankProfileSummaryText.textContent = `파일 ${elements.bankProfileSummaryText.dataset.fileCount || 0}개 · ${ruleLabel(elements.bankProfileRule.value)}`;
   });
   elements.bankAttention.addEventListener("click", () => {
+    examWizard?.showScreen('banks');
     elements.bankManager.open = true;
     window.requestAnimationFrame(() => {
       elements.bankFileRows.querySelector("tr.needs-attention")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2466,6 +2479,8 @@ syncSettingsFromControls();
 bindEvents();
 bindExamPresets();
 bindExamHistory();
+examWizard = mountExamWizard({ document, getState: () => state, questions: quickQuestions,
+  estimate: scheduleQuickEstimate, rules: quickRules, save: saveWorkspaceDraft });
 document.querySelector("#resume-workspace").addEventListener("click", resumeWorkspace);
 for (const eventName of ["input", "change", "click"]) document.addEventListener(eventName, () => { window.setTimeout(saveWorkspaceDraft, 0); });
 // Edits are saved as they happen. An old tab must never save on close.
