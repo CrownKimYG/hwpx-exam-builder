@@ -63,9 +63,9 @@ export function parseSlotReferences(value, questionCount) {
 
 export function compileSlotRules(cells, questionCount) {
   const rules = new Map(Array.from({ length: questionCount }, (_, index) => [index + 1, []]));
-  cells.forEach(({ unitKey = null, difficulty = null, value = "" }) => {
+  cells.forEach(({ unitKey = null, unitKeys = null, difficulty = null, value = "" }) => {
     parseSlotReferences(value, questionCount).forEach((slot) => {
-      rules.get(slot).push({ unitKey: unitKey || null, difficulty: difficulty || null });
+      rules.get(slot).push({ unitKey: unitKey || null, ...(unitKeys ? { unitKeys } : {}), difficulty: difficulty || null });
     });
   });
   const missing = [...rules.entries()].filter(([, predicates]) => predicates.length === 0).map(([slot]) => `#${slot}`);
@@ -78,6 +78,7 @@ export function questionMatches(question, predicates) {
     (!predicate.bankId || predicate.bankId === question.bankId)
     &&
     (!predicate.unitKey || predicate.unitKey === question.unitKey)
+    && (!predicate.unitKeys || predicate.unitKeys.includes(question.unitKey))
     && (!predicate.difficulty || predicate.difficulty === question.difficulty)
   ));
 }
@@ -99,11 +100,16 @@ export function compileBankMatrixRules(banks) {
   // Validate counts and identities before composing each bank's local slots.
   compileBankQuotaRules(banks);
   const combined = new Map();
-  for (const { bankId, count, name = bankId, cells = [] } of banks) {
+  for (const { bankId, count, name = bankId, cells = [], groups = [] } of banks) {
     if (count === 0) continue;
     let local;
     try {
-      local = compileSlotRules(cells, count);
+      local = compileSlotRules(cells.map(cell => {
+        if (!cell.unitKey?.startsWith('group:')) return cell;
+        const group = groups.find(g => `group:${g.id}` === cell.unitKey);
+        if (!group?.units?.length) throw new Error('번호를 지정한 묶음을 찾지 못했습니다.');
+        return { ...cell, unitKey: null, unitKeys: group.units };
+      }), count);
     } catch (error) {
       throw new Error(`${name}: ${error.message}`);
     }

@@ -1,6 +1,4 @@
 import { createWorkspaceStore, WorkspaceConflictError, WORKSPACE_DRAFT_KEY } from "./workspace-storage.js";
-import { mountExamWizard } from "./exam-wizard.js";
-import { compileGroupedRules } from "./grouped-generator.js";
 import { localDateStamp } from "./date-format.js";
 import { loadArchive } from "./archive.js";
 import { compileMixedRules } from "./mixed-generator.js";
@@ -43,6 +41,7 @@ import {
   compileBankMatrixRules,
   compileBankQuotaRules,
   estimateMaximumExamSets,
+  parseSlotReferences,
 } from "./quick-generator.js";
 import {
   AUTO_BANK_RULE_ID,
@@ -152,12 +151,10 @@ const templateState = {
 };
 
 let documentViewer = null;
-let examWizard = null;
 let currentPage = 0;
 let pageCount = 0;
 let previewRequest = 0;
 let estimateTimer = null;
-let capacityWorker = null;
 let measureContext = null;
 let lastMeasuredFont = "";
 let activeBuild = null;
@@ -253,11 +250,10 @@ function renderBankQuotas() {
     const edit = createElement("button", { text: "조건", attributes: { type: "button", "aria-label": `${profile.displayName} 조건 설정` } });
     edit.addEventListener("click", () => {
       document.querySelector(".exam-settings").open = false;
-      if (elements.quickMode.value === "mixed") { examWizard?.conditions(); document.querySelector("#mixed-config").scrollIntoView({block:"nearest"}); return; }
+      if (elements.quickMode.value === "mixed") { document.querySelector("#mixed-config").scrollIntoView({block:"nearest"}); return; }
       state.matrixBankId = profile.bankId;
       elements.quickMode.value = "matrix";
       renderBankQuotas(); renderQuickMatrix();
-      examWizard?.conditions();
       elements.matrixTabs.scrollIntoView({ block: "nearest", behavior: "smooth" });
     });
     row.classList.toggle("excluded", Number(input.value) === 0);
@@ -266,15 +262,9 @@ function renderBankQuotas() {
   });
   elements.bankQuotas.replaceChildren(...rows);
   syncBankQuotaTotal();
-  examWizard?.refresh();
 }
 
 function syncBankQuotaTotal() {
-  if (elements.quickMode.value === "grouped") {
-    elements.quickQuestionCount.readOnly = false;
-    elements.quickQuestionCount.value = state.quick.questionCount;
-    return;
-  }
   elements.quickQuestionCount.value = String(state.bankProfiles.reduce((sum, p) => sum + Number(state.quick.bankCounts[p.bankId] || 0), 0));
 }
 
@@ -685,7 +675,7 @@ async function resumeWorkspace() {
     state.nextExamId = draft.nextExamId || 1;
     state.settings = draft.settings;
     state.matrixBankId = draft.matrixBankId;
-    elements.quickMode.value = draft.mode || "banks";
+    elements.quickMode.value = draft.mode === "grouped" ? "matrix" : draft.mode || "matrix";
     elements.quickExamName.value = state.quick.examName;
     elements.quickExamCount.value = state.quick.examCount;
     elements.quickSeed.value = state.quick.seed;
@@ -774,6 +764,7 @@ async function loadExamPreset() {
     if (state.handoffExams.length) throw new Error("인계 작업에서는 출제 템플릿을 적용할 수 없습니다. 일반 출제 작업에서 사용해 주세요.");
     const preset = readExamPresets(localStorage).find((p) => p.id === document.querySelector("#exam-preset").value);
     if (!preset) throw new Error("적용할 템플릿을 선택해 주세요.");
+    if (preset.mode === "grouped") throw new Error("단계형 출제 템플릿입니다. 번호표에서 조건을 설정한 뒤 새 템플릿으로 저장하세요.");
     const saved = await listBankProfiles();
     const profiles = preset.banks.map((b) => state.bankProfiles.find((p) => p.bankId === b.bankId) || saved.find((p) => p.bankId === b.bankId));
     if (profiles.some((p) => !p)) throw new Error("템플릿에 사용한 은행이 삭제되었습니다. 은행을 복원하거나 새 템플릿을 저장해 주세요.");
@@ -1591,8 +1582,7 @@ function renderQuickMatrix() {
       panel.append(createElement("p", { className: "question-label", text: "아직 분석된 문항이 없습니다. 파일 관리에서 연결 상태를 확인하세요." }));
       return panel;
     }
-    const hint = count > 0 ? `이 은행의 #1~#${count} 위치를 조건 칸에 입력하세요. All은 ${count}문항 전체입니다.` : "분석은 완료되었습니다. 위에서 문항 수를 늘리면 조건을 입력할 수 있습니다.";
-    panel.append(createElement("p", { className: "question-label", text: hint }));
+
     const random = createElement("button", { className: "random-fill", text: "이 은행 전체 랜덤", attributes: { type: "button" } });
     random.disabled = count <= 0;
     random.addEventListener("click", () => {
@@ -1603,6 +1593,16 @@ function renderQuickMatrix() {
       scheduleQuickEstimate();
     });
     panel.append(random);
+    state.quick.matrixGroups ||= {};
+    const groups = state.quick.matrixGroups[profile.bankId] ||= [];
+    const selectedUnits = new Set();
+    const groupButton = createElement('button', { text: '선택 단원 묶기', attributes: { type: 'button' } });
+    groupButton.disabled = true;
+    groupButton.addEventListener('click', () => {
+      groups.push({ id: crypto.randomUUID(), units: [...selectedUnits] });
+      renderQuickMatrix(); saveWorkspaceDraft();
+    });
+    panel.append(groupButton);
     const table = createElement("table", { className: "rule-matrix" });
     const header = createElement("thead");
     const headerRow = createElement("tr");
@@ -1610,19 +1610,47 @@ function renderQuickMatrix() {
     const difficulties = korean ? [null] : profile.ruleId === GRADED_ESSAY_RULE_ID ? ["lv1", "lv2", "lv3", null] : [...DIFFICULTIES, null];
     headerRow.append(createElement("th", { text: korean ? "강 / 문항 위치" : "단원 / 난이도" }));
     difficulties.forEach((difficulty) => headerRow.append(createElement("th", {
-      text: korean ? "문항 위치" : (profile.ruleId === GRADED_ESSAY_RULE_ID ? ({lv1: "하", lv2: "중", lv3: "상"}[difficulty] || difficulty || "랜덤") : (difficulty || "랜덤")),
+      text: korean ? "문항 위치" : (profile.ruleId === GRADED_ESSAY_RULE_ID ? ({lv1: "하", lv2: "중", lv3: "상"}[difficulty] || difficulty || "난이도 전체") : (difficulty || "난이도 전체")),
       className: difficulty ? "" : "random-cell",
     })));
     header.append(headerRow);
     const body = createElement("tbody");
-    [...units, { key: null, label: "단원 랜덤" }].forEach((unit) => {
+    [...units, ...groups.map((g, i) => ({ key: `group:${g.id}`, label: `묶음 ${i + 1} · ${g.units.map(key => units.find(u => u.key === key)?.label || '연결 필요').join(' · ')}`, group: g })), { key: null, label: "단원·묶음 전체" }].forEach((unit) => {
       const row = createElement("tr");
-      row.append(createElement("th", { text: unit.label, className: unit.key ? "" : "random-cell" }));
+      const nameCell = createElement('th', { className: unit.key ? '' : 'random-cell' });
+      if (unit.key && !unit.group) {
+        const label = createElement('label', { className: 'matrix-unit-select' });
+        const check = createElement('input', { attributes: { type: 'checkbox', 'aria-label': `${unit.label} 묶음 선택` } });
+        check.addEventListener('change', () => { check.checked ? selectedUnits.add(unit.key) : selectedUnits.delete(unit.key); groupButton.disabled = selectedUnits.size < 2; });
+        label.append(check, document.createTextNode(unit.label)); nameCell.append(label);
+      } else nameCell.textContent = unit.label;
+      if (unit.group) {
+        const remove = createElement('button', { text: '묶음 해제', attributes: { type: 'button' } });
+        remove.addEventListener('click', () => {
+          // Preserve entered slot conditions by transferring them to member rows.
+          try {
+          const nextCells = { ...state.quick.cells };
+          for (const difficulty of difficulties) {
+            const oldKey = matrixCellKey(profile.bankId, unit.key, difficulty);
+            const value = state.quick.cells[oldKey];
+            if (value) for (const key of unit.group.units) {
+              const target = matrixCellKey(profile.bankId, key, difficulty);
+              const slots = new Set([...parseSlotReferences(state.quick.cells[target], count), ...parseSlotReferences(value, count)]);
+              nextCells[target] = [...slots].join(', ');
+            }
+            delete nextCells[oldKey];
+          }
+          state.quick.cells = nextCells;
+          groups.splice(groups.indexOf(unit.group), 1); renderQuickMatrix(); saveWorkspaceDraft();
+          } catch (error) { elements.quickStatus.textContent = error.message; elements.quickStatus.className = "quick-status error"; }
+        }); nameCell.append(remove);
+      }
+      row.append(nameCell);
       difficulties.forEach((difficulty) => {
         const cell = createElement("td", { className: !unit.key || !difficulty ? "random-cell" : "" });
         const key = matrixCellKey(profile.bankId, unit.key, difficulty);
         const input = createElement("input", { attributes: {
-          type: "text", "aria-label": `${profile.displayName} ${unit.label} ${korean ? "문항 위치" : (difficulty || "난이도 랜덤")}`,
+          type: "text", "aria-label": `${profile.displayName} ${unit.label} ${korean ? "문항 위치" : (difficulty || "난이도 전체")}`,
           "data-bank-id": profile.bankId, "data-unit-key": unit.key || "", "data-difficulty": difficulty || "",
         } });
         input.value = state.quick.cells[key] || "";
@@ -1650,12 +1678,11 @@ function quickQuestions() {
 }
 
 function quickRules() {
-  if (elements.quickMode.value === "grouped") return { ...compileGroupedRules(examWizard.config(), Number(elements.quickQuestionCount.value)), difficultyCounts: examWizard.difficulty() };
   const banks = state.bankProfiles.map((p) => ({ bankId: p.bankId, name: p.displayName, count: Number(state.quick.bankCounts[p.bankId] ?? 0) }));
   if (elements.quickMode.value === "mixed") return compileMixedRules(banks.map(b=>({...b,range:state.quick.mixed?.bankRanges?.[b.bankId]})),state.quick.mixed?.rows);
   if (elements.quickMode.value === "banks") return compileBankQuotaRules(banks);
   const inputs = [...elements.matrixWrap.querySelectorAll("input[data-bank-id]")];
-  return compileBankMatrixRules(banks.map((bank) => ({ ...bank,
+  return compileBankMatrixRules(banks.map((bank) => ({ ...bank, groups: state.quick.matrixGroups?.[bank.bankId] || [],
     cells: inputs.filter((input) => input.dataset.bankId === bank.bankId).map((input) => ({
       unitKey: input.dataset.unitKey || null, difficulty: input.dataset.difficulty || null, value: input.value,
     })),
@@ -1673,36 +1700,18 @@ function collectUsedCodes() {
 }
 
 function scheduleQuickEstimate() {
-  capacityWorker?.terminate(); capacityWorker = null;
-  if (examWizard?.capacityVisible()) examWizard.setCapacity('가능 시험지 부수 계산 중…');
   window.clearTimeout(estimateTimer);
   estimateTimer = window.setTimeout(updateQuickEstimate, 120);
 }
 
 function updateQuickEstimate() {
-  if (!state.questions.length) { examWizard?.setCapacity('출제 가능 0부'); return; }
+  if (!state.questions.length) return;
   try {
     const rules = quickRules();
-    const disconnected = state.bankProfiles.filter((p) => (rules.kind === "grouped" || Number(state.quick.bankCounts[p.bankId]) > 0) && state.files.some((r) => r.bankId === p.bankId && !r.bytes));
+    const disconnected = state.bankProfiles.filter((p) => (Number(state.quick.bankCounts[p.bankId]) > 0) && state.files.some((r) => r.bankId === p.bankId && !r.bytes));
     if (disconnected.length) throw new Error(`${disconnected.map((p) => p.displayName).join(", ")}: 원본 파일을 다시 연결해 주세요.`);
     const usedCodes = collectUsedCodes();
-    if (examWizard?.capacityVisible()) {
-      capacityWorker?.terminate();
-      const worker = new Worker(new URL('./grouped-capacity.worker.js', import.meta.url), { type: 'module' });
-      capacityWorker = worker;
-      examWizard.setCapacity('가능 시험지 부수 계산 중…');
-      worker.onmessage = ({ data }) => {
-        if (capacityWorker !== worker) return;
-        worker.terminate(); capacityWorker = null;
-        examWizard.setCapacity(data.error ? data.error : data.count > 0
-          ? `출제 가능 ${data.count}부${data.limited || data.capped ? ' 이상' : ''} · 단원·번호 기준`
-          : data.limited ? '부수 계산 한도 초과 · 조건을 좁혀 주세요.' : `출제 가능 0부${data.reason ? ' · ' + data.reason : ''}`);
-      };
-      worker.onerror = () => { if (capacityWorker === worker) { worker.terminate(); capacityWorker = null; examWizard.setCapacity('부수 계산 실패 · 설정을 다시 확인하세요.'); } };
-      worker.postMessage({ questions: quickQuestions(), rules, usedCodes, seed: elements.quickSeed.value || 'estimate' });
-      return;
-    }
-    if (rules.kind === "mixed" || rules.kind === "grouped") {
+    if (rules.kind === "mixed") {
       const requested = Number(elements.quickExamCount.value);
       allocateExamSets({questions:quickQuestions(),rules,usedCodes,examCount:requested,seed:elements.quickSeed.value || "estimate"});
       elements.quickStatus.className = "quick-status";
@@ -1716,8 +1725,6 @@ function updateQuickEstimate() {
     elements.quickStatus.textContent = `현재 ${quickQuestions().filter((q) => !usedCodes.has(q.code)).length}문항 사용 가능 · 중복 없는 시험지 최대 ${maximum}부`;
     elements.quickGenerate.disabled = maximum < 1 || requested < 1 || requested > maximum;
   } catch (error) {
-    capacityWorker?.terminate(); capacityWorker = null;
-    if (examWizard?.capacityVisible()) examWizard.setCapacity(error.message);
     elements.quickStatus.className = /조건이 없는/.test(error.message) ? "quick-status" : "quick-status error";
     elements.quickStatus.textContent = error.message;
     elements.quickGenerate.disabled = true;
@@ -1755,7 +1762,7 @@ function generateWithHistory() {
       });
       renderExamDrafts();
     } else {
-      exams.forEach((codes, i) => addExam(codes, { baseName: [examWizard?.activeTrack(), elements.quickExamName.value].filter(Boolean).join("_"), historyId: historyIds[i] }));
+      exams.forEach((codes, i) => addExam(codes, { baseName: elements.quickExamName.value, historyId: historyIds[i] }));
     }
     state.quick.seed = seed;
     elements.quickStatus.className = "quick-status";
@@ -1763,8 +1770,7 @@ function generateWithHistory() {
     updateQuickEstimate();
     setBuildStatus(`${examCount}부가 목록에 추가되었습니다. 확인 후 HWPX를 다운로드하세요.`, "success");
     saveWorkspaceDraft();
-    examWizard?.generated(examCount);
-    document.querySelector('#wizard-panel-4')?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    elements.examList.lastElementChild?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   } catch (error) {
     elements.quickStatus.className = "quick-status error";
     elements.quickStatus.textContent = error.message;
@@ -2399,7 +2405,6 @@ function bindEvents() {
     elements.bankProfileSummaryText.textContent = `파일 ${elements.bankProfileSummaryText.dataset.fileCount || 0}개 · ${ruleLabel(elements.bankProfileRule.value)}`;
   });
   elements.bankAttention.addEventListener("click", () => {
-    examWizard?.showScreen('banks');
     elements.bankManager.open = true;
     window.requestAnimationFrame(() => {
       elements.bankFileRows.querySelector("tr.needs-attention")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2502,8 +2507,11 @@ syncSettingsFromControls();
 bindEvents();
 bindExamPresets();
 bindExamHistory();
-examWizard = mountExamWizard({ document, getState: () => state, questions: quickQuestions,
-  estimate: scheduleQuickEstimate, rules: quickRules, save: saveWorkspaceDraft, download: buildAllExams });
+elements.quickMode.value = 'matrix';
+document.body.dataset.workspaceScreen = 'classic';
+new ResizeObserver(() => { document.body.style.setProperty('--download-bar-height', `${elements.generationBar.getBoundingClientRect().height}px`); }).observe(elements.generationBar);
+document.querySelector('.exam-settings').open = true;
+
 document.querySelector("#resume-workspace").addEventListener("click", resumeWorkspace);
 for (const eventName of ["input", "change", "click"]) document.addEventListener(eventName, () => { window.setTimeout(saveWorkspaceDraft, 0); });
 // Edits are saved as they happen. An old tab must never save on close.

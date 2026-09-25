@@ -13,6 +13,7 @@ export function createExamPreset({ id, name, profiles, quick, mode }) {
   const banks = profiles.map((p) => ({
     bankId: p.bankId, name: p.displayName, ruleId: p.ruleId,
     count: Number(quick.bankCounts[p.bankId] || 0),
+    groups: structuredClone(quick.matrixGroups?.[p.bankId] || []),
     cells: Object.entries(quick.cells).flatMap(([key, value]) => {
       const [bankId, unitKey, difficulty] = JSON.parse(key);
       return bankId === p.bankId && String(value).trim() ? [{ unitKey, difficulty, value }] : [];
@@ -35,8 +36,9 @@ export function applyExamPreset(preset, profiles, unitsByBank, currentQuick) {
     const profile = profiles.find((p) => p.bankId === bank.bankId);
     if (!profile) throw new Error(`${bank.name}: 저장된 문제은행이 없습니다.`);
     if (profile.ruleId !== bank.ruleId) throw new Error(`${bank.name}: 처리 방식이 변경되어 조건을 적용할 수 없습니다.`);
+    if (preset.mode === "matrix" && bank.groups?.some(g => g.units.some(u => !unitsByBank[bank.bankId]?.includes(u)))) throw new Error(`${bank.name}: 묶음의 단원을 찾지 못했습니다.`);
     for (const cell of bank.cells) {
-      if (preset.mode === "matrix" && bank.count > 0 && cell.unitKey && !unitsByBank[bank.bankId]?.includes(cell.unitKey)) {
+      if (preset.mode === "matrix" && bank.count > 0 && cell.unitKey && !cell.unitKey.startsWith("group:") && !unitsByBank[bank.bankId]?.includes(cell.unitKey)) {
         throw new Error(`${bank.name}: 저장된 조건의 단원을 찾지 못했습니다. 은행 구성을 확인해 주세요.`);
       }
     }
@@ -57,7 +59,7 @@ export function applyExamPreset(preset, profiles, unitsByBank, currentQuick) {
     bankCounts[bank.bankId] = bank.count;
     for (const cell of bank.cells) cells[JSON.stringify([bank.bankId, cell.unitKey || null, cell.difficulty || null])] = cell.value;
   }
-  return { ...currentQuick, wizardStep: 0, wizardResultIds: null, workflow: preset.workflow || "single", series: structuredClone(preset.series || {}), grouped: structuredClone(preset.grouped || null), mixed: structuredClone(preset.mixed || null), bankCounts, cells, examName: preset.examName, examCount: preset.examCount,
+  return { ...currentQuick, matrixGroups: Object.fromEntries(preset.banks.map(b => [b.bankId, structuredClone(b.groups || [])])), wizardStep: 0, wizardResultIds: null, workflow: preset.workflow || "single", series: structuredClone(preset.series || {}), grouped: structuredClone(preset.grouped || null), mixed: structuredClone(preset.mixed || null), bankCounts, cells, examName: preset.examName, examCount: preset.examCount,
     questionCount: preset.mode === 'grouped' ? preset.questionCount : preset.banks.reduce((sum, bank) => sum + bank.count, 0) };
 }
 
