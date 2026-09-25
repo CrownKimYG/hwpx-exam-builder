@@ -61,3 +61,23 @@ test('여러 부에 필요한 묶음 문항 부족을 추첨 전 검출한다',(
  const config=initialGroupedConfig(questions);config.subjects[1].weight=0;config.subjects[0].groups=[{units:['수학1:0'],count:1}];
  assert.throws(()=>run(config,1,40),/미사용 문항 30개.*40개/);
 });
+
+test('단원별 난이도별 번호를 지키고 나머지는 자동 배치한다',()=>{
+ const config=initialGroupedConfig(questions);config.subjects[1].weight=0;
+ config.subjects[0].positionMode='unit';config.subjects[0].unitPositions={'수학1:0':{lv1:'1'},'수학1:1':{lv2:'3'}};
+ const exams=run(config,3,2);
+ for(const exam of exams){assert.equal(lookup.get(exam[0]).unitKey,'수학1:0');assert.equal(lookup.get(exam[0]).difficulty,'lv1');assert.equal(lookup.get(exam[2]).unitKey,'수학1:1');assert.equal(lookup.get(exam[2]).difficulty,'lv2');}
+});
+test('묶음별 번호와 난이도 합계를 동시에 만족하고 출력 순서를 유지한다',()=>{
+ const config=initialGroupedConfig(questions);config.subjects[1].weight=0;
+ const s=config.subjects[0];s.positionMode='group';
+ s.groups=[{units:['수학1:0','수학1:1','수학1:2'],count:1,positions:{lv1:'2'}},{units:['수학1:3','수학1:4','수학1:5'],count:2,positions:{lv2:'1, 3'}}];
+ const rules={...compileGroupedRules(config,3),difficultyCounts:{lv1:1,lv2:2,lv3:0}};
+ const exams=allocateExamSets({questions,rules,examCount:3,seed:'positions'});
+ for(const exam of exams) {
+   assert.equal(lookup.get(exam[1]).difficulty,'lv1');assert.ok(s.groups[0].units.includes(lookup.get(exam[1]).unitKey));
+   for(const slot of [0,2]) {assert.equal(lookup.get(exam[slot]).difficulty,'lv2');assert.ok(s.groups[1].units.includes(lookup.get(exam[slot]).unitKey));}
+ }
+ assert.throws(()=>allocateExamSets({questions,rules:{...rules,difficultyCounts:{lv1:0,lv2:3,lv3:0}},examCount:1,nodeLimit:1000}));
+ s.groups[0].positions.lv1='4';assert.throws(()=>compileGroupedRules(config,3),/범위/);
+});

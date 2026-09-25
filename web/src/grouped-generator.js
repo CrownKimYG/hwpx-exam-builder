@@ -1,5 +1,5 @@
 import { difficultyCounts } from './exam-series.js';
-import { seededRandom } from './quick-generator.js';
+import { parseSlotReferences, seededRandom } from './quick-generator.js';
 
 export function subjectName(value) {
   const s = String(value || '과목 미분류').normalize('NFKC').replace(/\s+/g, '');
@@ -49,7 +49,17 @@ export function compileGroupedRules(config, size) {
     }
   }
   if (!subjects.some(s => s.weight > 0)) throw new Error('과목 비율을 입력하세요.');
-  return { kind: 'grouped', size, subjects };
+  const positions = Array.from({ length: size }, () => []);
+  for (const s of subjects) {
+    if (s.weight === 0 || !['unit', 'group'].includes(s.positionMode)) continue;
+    const rows = s.positionMode === 'group' ? s.groups.map(g => ({ units: g.units, cells: g.positions || {} }))
+      : Object.entries(s.unitPositions || {}).map(([unit, cells]) => ({ units: [unit], cells }));
+    for (const row of rows) for (const [difficulty, value] of Object.entries(row.cells)) {
+      for (const slot of parseSlotReferences(value, size)) positions[slot - 1].push({ subject: s.name, units: row.units, difficulty: difficulty === 'any' ? '' : difficulty });
+    }
+  }
+  return { kind: 'grouped', size, subjects, positions };
+
 }
 
 // Largest remainder per paper, with cumulative deficit breaking ties. Each
@@ -130,8 +140,32 @@ export function allocateGroupedExamSets({ questions, rules, examCount, usedCodes
   const change = (map, key, delta) => map.set(key, (map.get(key) || 0) + delta);
   let nodes = 0;
   const deadline = Date.now() + 2500;
+  const positioned = rules.positions?.some(predicates => predicates.length);
+  let ordered;
+  function arrange() {
+    const arrangements = [];
+    for (let e = 0; e < examCount; e++) {
+      const indices = demands.flatMap((d, i) => d.e === e && selected[i] ? [i] : []);
+      const assigned = Array(rules.size).fill(-1);
+      function place(index, seen) {
+        const q = pool[selected[index].pi];
+        for (let slot = 0; slot < rules.size; slot++) {
+          if (seen.has(slot)) continue;
+          const predicates = rules.positions[slot];
+          if (predicates.length && !predicates.some(p => p.subject === q.subject && p.units.includes(q.unitKey) && (!p.difficulty || p.difficulty === q.difficulty))) continue;
+          seen.add(slot);
+          if (assigned[slot] < 0 || place(assigned[slot], seen)) { assigned[slot] = index; return true; }
+        }
+        return false;
+      }
+      if (!indices.every(i => place(i, new Set()))) return null;
+      arrangements.push(assigned);
+    }
+    return arrangements;
+  }
   function search(depth) {
     if (++nodes > nodeLimit || Date.now() > deadline) throw new Error('추첨 탐색 한도에 도달했습니다. 부수를 줄이거나 묶음 조건을 조정하세요.');
+    if (positioned) { ordered = arrange(); if (!ordered) return false; }
     if (depth === demands.length) return true;
     let best = -1, choices;
     for (let i = 0; i < demands.length; i++) {
@@ -165,7 +199,8 @@ export function allocateGroupedExamSets({ questions, rules, examCount, usedCodes
   }
   const empty = demands.find(d => !d.options.length);
   if (empty) throw new Error(`시험지 ${empty.e + 1} · ${rules.subjects[empty.si].name}: 묶음 조건에 맞는 미사용 문항이 없습니다.`);
-  if (!search(0)) throw new Error('과목·교재 비율, 난이도와 묶음 조건을 만족하는 미사용 단원이 부족합니다. 비율이나 묶음을 조정하세요.');
+  if (!search(0)) throw new Error('과목·교재 비율, 난이도·번호와 묶음 조건을 만족하는 미사용 단원이 부족합니다. 비율이나 묶음을 조정하세요.');
+  if (positioned) return ordered.map(indices => indices.map(i => pool[selected[i].pi].codes.pop()));
   const result = Array.from({ length: examCount }, () => []);
   selected.forEach((o, i) => result[demands[i].e].push(pool[o.pi].codes.pop()));
   return result.map(shuffle);

@@ -75,3 +75,18 @@ test('단원 묶음과 난이도 개수는 독립적이며 이전 묶음 난이�
   assert.equal(JSON.stringify(wizard.config()),before);
  } finally {globalThis.Option=original;}
 });
+
+test('단원별과 묶음별 번호표 입력을 별도로 보존한다',()=>{
+ const dom=new JSDOM(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'));
+ const doc=dom.window.document, original=globalThis.Option;globalThis.Option=dom.window.Option;
+ try {
+  const questions=[{subject:'수학Ⅰ',bankId:'a',unitKey:'u1',unitName:'단원1'}];
+  const state={questions,exams:[],quick:{questionCount:1,examCount:1},bankProfiles:[{bankId:'a',displayName:'교재'}]};
+  const wizard=mountExamWizard({document:doc,getState:()=>state,questions:()=>questions,estimate:()=>{},rules:()=>{},save:()=>{}});
+  const choose=value=>{const select=doc.querySelector('[aria-label="수학Ⅰ 번호 설정"]');select.value=value;select.dispatchEvent(new dom.window.Event('change'));};
+  choose('unit');let input=doc.querySelector('[aria-label="수학Ⅰ 단원1 하 출제 번호"]');input.value='1';input.dispatchEvent(new dom.window.Event('input'));
+  choose('group');input=doc.querySelector('[aria-label="수학Ⅰ 묶음 1 · 단원1 중 출제 번호"]');input.value='1';input.dispatchEvent(new dom.window.Event('input'));
+  const s=wizard.config().subjects[0];assert.equal(s.unitPositions.u1.lv1,'1');assert.equal(s.groups[0].positions.lv2,'1');
+  choose('unit');assert.equal(doc.querySelector('[aria-label="수학Ⅰ 단원1 하 출제 번호"]').value,'1');
+ }finally{globalThis.Option=original;}
+});

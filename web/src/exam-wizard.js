@@ -127,7 +127,34 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
       const list = make('div', '', 'wizard-group-units'); for (const key of g.units) list.append(make('span', name(key))); card.append(list);
       if (g.units.length > 1) card.append(button('묶음 해제', () => { s.groups.splice(i, 1, ...g.units.map(unit => ({ units: [unit], count: 'auto' }))); renderGroups(); changed(); }));
       grid.append(card);
-    }); groups.append(grid);
+    }); groups.append(grid); renderPositions(s, name);
+  }
+  function renderPositions(subject, unitName) {
+    const field = make('label', '', 'wizard-field'), select = make('select');
+    field.append(make('span', '번호 설정'), select); select.setAttribute('aria-label', `${subject.name} 번호 설정`);
+    for (const [value, label] of [['auto', '자동'], ['unit', '단원별 · 난이도별'], ['group', '묶음별 · 난이도별']]) select.add(new Option(label, value));
+    select.value = subject.positionMode || 'auto';
+    select.addEventListener('change', () => { subject.positionMode = select.value; renderGroups(); changed(); });
+    groups.append(field);
+    if (!['unit', 'group'].includes(subject.positionMode)) return;
+    const rows = subject.positionMode === 'group'
+      ? subject.groups.map((g, i) => ({ label: `묶음 ${i + 1} · ${g.units.map(unitName).join(' · ')}`, cells: g.positions ||= {} }))
+      : [...new Set(subject.groups.flatMap(g => g.units))].map(unit => ({ label: unitName(unit), cells: (subject.unitPositions ||= {})[unit] ||= {} }));
+    const table = make('table', '', 'rule-matrix'), head = make('thead'), header = make('tr');
+    const difficulties = [['lv1', '하'], ['lv2', '중'], ['lv3', '상'], ['any', '랜덤']];
+    header.append(make('th', subject.positionMode === 'group' ? '묶음' : '단원'));
+    difficulties.forEach(([, label]) => header.append(make('th', label))); head.append(header); table.append(head);
+    const tbody = make('tbody');
+    for (const row of rows) {
+      const tr = make('tr'); tr.append(make('th', row.label));
+      for (const [key, label] of difficulties) {
+        const td = make('td'), input = make('input'); input.type = 'text'; input.value = row.cells[key] || ''; input.placeholder = '1, 3~5';
+        input.setAttribute('aria-label', `${subject.name} ${row.label} ${label} 출제 번호`);
+        input.addEventListener('input', () => { row.cells[key] = input.value; changed(); }); td.append(input); tr.append(td);
+      }
+      tbody.append(tr);
+    }
+    table.append(tbody); const scroll = make('div', '', 'bank-matrix-scroll'); scroll.append(table); groups.append(scroll);
   }
   function renderReview() {
     review.replaceChildren();
