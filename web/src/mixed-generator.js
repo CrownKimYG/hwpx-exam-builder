@@ -1,4 +1,5 @@
 import { compileBankQuotaRules, parseSlotReferences, seededRandom } from './quick-generator.js';
+import { createUnitBalance } from './unit-balance.js';
 
 export function compileMixedRules(banks, rows) {
   const size = compileBankQuotaRules(banks).size;
@@ -23,6 +24,7 @@ export function allocateMixedExamSets({questions,rules,examCount,usedCodes=new S
   if (!Number.isInteger(examCount)||examCount<1) throw new Error('시험지 수를 1 이상 입력하세요.');
   if (examCount*rules.size>1000) throw new Error('혼합 배치는 한 번에 총 1,000문항까지 출제할 수 있습니다. 부수를 나눠 주세요.');
   const random=seededRandom(seed);
+  const balance=createUnitBalance(examCount,random);
   const shuffle=items=>{ const a=[...items]; for(let i=a.length-1;i>0;i--){ const j=Math.floor(random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
   const bankIndex=new Map(rules.banks.map((b,i)=>[b.bankId,i]));
   const groups=new Map();
@@ -70,9 +72,11 @@ export function allocateMixedExamSets({questions,rules,examCount,usedCodes=new S
     const {e}=demands[best];
     // The slot's eligible options are shared across exams, but their draw order
     // must be fresh for each assignment to avoid repeating a unit/difficulty layout.
-    for(const o of shuffle(bestOptions)) {
+    for(const o of balance.order(e,bestOptions,o=>pool[o.gi])) {
       assigned[best]=o; remaining[o.gi]--; bankLeft[e][o.bi]--; rowLeft[e][o.ri]--;
+      balance.add(e,pool[o.gi],1);
       if(search(depth+1)) return true;
+      balance.add(e,pool[o.gi],-1);
       assigned[best]=null; remaining[o.gi]++; bankLeft[e][o.bi]++; rowLeft[e][o.ri]++;
     }
     return false;

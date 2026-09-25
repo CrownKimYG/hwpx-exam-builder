@@ -1,4 +1,5 @@
 import { allocateMixedExamSets } from "./mixed-generator.js";
+import { createUnitBalance } from "./unit-balance.js";
 function hashSeed(seed) {
   let hash = 2166136261;
   for (const character of String(seed)) {
@@ -128,20 +129,34 @@ function candidateMap(questions, rules, examCount, usedCodes, random) {
       });
     }
   }
-  return shuffled(demands, random).sort((left, right) => left.candidates.length - right.candidates.length);
+  return shuffled(demands, random).sort((left, right) =>
+    left.examIndex - right.examIndex || left.candidates.length - right.candidates.length);
 }
 
-function matchDemands(demands) {
+function matchDemands(demands, questions, examCount, random) {
   const questionToDemand = new Map();
   const demandToQuestion = new Map();
   const byId = new Map(demands.map((demand) => [demand.id, demand]));
+  const byCode = new Map(questions.map(question => [question.code, question]));
+  const balance = createUnitBalance(examCount, random);
 
   function assign(demand, visited) {
-    for (const code of demand.candidates) {
+    const candidates = demand.candidates.filter(code => !visited.has(code));
+    // Use unused questions first; only displace an earlier assignment when
+    // necessary to keep all explicit slot conditions feasible.
+    const ordered = [false, true].flatMap(occupied => balance.order(
+      demand.examIndex,
+      candidates.filter(code => questionToDemand.has(code) === occupied),
+      code => byCode.get(code),
+    ));
+    for (const code of ordered) {
       if (visited.has(code)) continue;
       visited.add(code);
       const occupiedBy = questionToDemand.get(code);
       if (!occupiedBy || assign(byId.get(occupiedBy), visited)) {
+        const previous = demandToQuestion.get(demand.id);
+        if (previous) balance.add(demand.examIndex, byCode.get(previous), -1);
+        balance.add(demand.examIndex, byCode.get(code), 1);
         questionToDemand.set(code, demand.id);
         demandToQuestion.set(demand.id, code);
         return true;
@@ -163,7 +178,7 @@ export function allocateExamSets({ questions, rules, examCount, usedCodes = new 
   const demands = candidateMap(questions, rules, examCount, usedCodes, random);
   const empty = demands.find((demand) => demand.candidates.length === 0);
   if (empty) throw new Error(`시험지 ${empty.examIndex + 1}의 #${empty.slot} 조건에 맞는 문항이 없습니다.`);
-  const matched = matchDemands(demands);
+  const matched = matchDemands(demands, questions, examCount, random);
   if (!matched) throw new Error(`${examCount}부를 중복 없이 구성할 수 없습니다.`);
   return Array.from({ length: examCount }, (_, examIndex) => [...rules.keys()]
     .sort((left, right) => left - right)
