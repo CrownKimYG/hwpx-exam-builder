@@ -57,3 +57,21 @@ test('인문계 출제 → 자연계 출제 → 이번 두 계열만 다운로�
   assert.equal(doc.querySelector('#wizard-panel-5').hidden,false);
  } finally {globalThis.Option=original;}
 });
+
+test('단원 묶음과 난이도 개수는 독립적이며 이전 묶음 난이도를 적용하지 않는다',()=>{
+ const dom=new JSDOM(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'));
+ const doc=dom.window.document, original=globalThis.Option;globalThis.Option=dom.window.Option;
+ try {
+  const questions=[{subject:'수학Ⅰ',bankId:'a',unitKey:'u1',unitName:'단원1'}];
+  const state={questions,exams:[],quick:{questionCount:1,examCount:1,grouped:{subjects:[{name:'수학Ⅰ',weight:1,bankWeights:null,groups:[{units:['u1'],count:1,difficulty:'lv3'}]}]}},bankProfiles:[{bankId:'a',displayName:'교재'}]};
+  const wizard=mountExamWizard({document:doc,getState:()=>state,questions:()=>questions,estimate:()=>{},rules:()=>{},save:()=>{}});
+  assert.equal(wizard.config().subjects[0].groups[0].difficulty,undefined);
+  assert.equal(doc.querySelectorAll('.wizard-group select').length,1);
+  const before=JSON.stringify(wizard.config());
+  const next=()=>doc.querySelector('.wizard-controls .primary').click();next();next();next();
+  const inputs=doc.querySelectorAll('#wizard-panel-3 .wizard-difficulty input');
+  inputs.forEach((input,i)=>{input.value=String(i===0?1:0);input.dispatchEvent(new dom.window.Event('input',{bubbles:true}));});
+  assert.deepEqual(wizard.difficulty(),{lv1:1,lv2:0,lv3:0});
+  assert.equal(JSON.stringify(wizard.config()),before);
+ } finally {globalThis.Option=original;}
+});

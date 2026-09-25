@@ -64,6 +64,9 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
       const included = new Set(current.groups.flatMap(g => g.units));
       for (const key of subject.units.keys()) if (!included.has(key)) current.groups.push({ units: [key], count: 'auto', difficulty: '' });
     }
+    // Group selection and per-track difficulty quotas are independent controls.
+    // Clear legacy group filters so restored workspaces cannot apply hidden restrictions.
+    for (const subject of c.subjects) for (const group of subject.groups) delete group.difficulty;
     return c;
   };
   function changed() { reached = Math.min(reached, 3); error.textContent = ''; estimate(); save(); }
@@ -122,12 +125,8 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
       select.add(new Option('자동', 'auto')); for (let n = 0; n <= g.units.length; n++) select.add(new Option(`${n}문항`, n)); select.value = g.count;
       select.addEventListener('change', () => { g.count = select.value; changed(); }); head.append(select); card.append(head);
       const list = make('div', '', 'wizard-group-units'); for (const key of g.units) list.append(make('span', name(key))); card.append(list);
-      const details = make('details'); details.append(make('summary', '조건'));
-      const difficulty = make('select'); difficulty.setAttribute('aria-label', `${s.name} 묶음 ${i + 1} 난이도`);
-      for (const [v, t] of [['', '난이도 전체'], ['lv1', '하 / lv1'], ['lv2', '중 / lv2'], ['lv3', '상 / lv3'], ['유제', '유제'], ['미분류', '미분류']]) difficulty.add(new Option(t, v));
-      difficulty.value = g.difficulty || ''; difficulty.addEventListener('change', () => { g.difficulty = difficulty.value; changed(); }); details.append(difficulty);
-      if (g.units.length > 1) details.append(button('묶음 해제', () => { s.groups.splice(i, 1, ...g.units.map(unit => ({ units: [unit], count: 'auto', difficulty: g.difficulty }))); renderGroups(); changed(); }));
-      card.append(details); grid.append(card);
+      if (g.units.length > 1) card.append(button('묶음 해제', () => { s.groups.splice(i, 1, ...g.units.map(unit => ({ units: [unit], count: 'auto' }))); renderGroups(); changed(); }));
+      grid.append(card);
     }); groups.append(grid);
   }
   function renderReview() {
@@ -143,7 +142,7 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
       for (const s of c.subjects) {
         const card = make('div', '', 'wizard-review-subject'); card.append(make('strong', s.name));
         if (s.bankWeights) card.append(make('p', Object.entries(s.bankWeights).map(([id, w]) => `${state.bankProfiles.find(b => b.bankId === id)?.displayName || '연결 필요'} ${w}`).join(' : ')));
-        for (const g of s.groups) card.append(make('div', `${g.units.map(u => catalog.find(item => item.name === s.name)?.units.get(u) || u).join(' · ')} → ${g.count === 'auto' ? '자동' : g.count + '문항'}${g.difficulty ? ' · ' + g.difficulty : ''}`, 'wizard-review-group'));
+        for (const g of s.groups) card.append(make('div', `${g.units.map(u => catalog.find(item => item.name === s.name)?.units.get(u) || u).join(' · ')} → ${g.count === 'auto' ? '자동' : g.count + '문항'}`, 'wizard-review-group'));
         card.append(button('수정', () => { subjectIndex = c.subjects.indexOf(s); go(2); })); review.append(card);
       }
     } else {
