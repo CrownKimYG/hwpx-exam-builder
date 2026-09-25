@@ -1,3 +1,4 @@
+import { matrixCapacity } from './matrix-capacity.js';
 import { allocateMixedExamSets } from "./mixed-generator.js";
 import { createUnitBalance } from "./unit-balance.js";
 import { allocateGroupedExamSets } from "./grouped-generator.js";
@@ -194,6 +195,7 @@ export function allocateExamSets({ questions, rules, examCount, usedCodes = new 
 }
 
 export function estimateMaximumExamSets({ questions, rules, usedCodes = new Set(), seed = "estimate", cap = 999 }) {
+  if (rules instanceof Map) return matrixCapacity({ questions, rules, usedCodes, cap }, questionMatches);
   const availableCount = questions.filter((question) => !usedCodes.has(question.code)).length;
   const upperBound = Math.min(cap, Math.floor(availableCount / Math.max(1, rules.size)));
   let low = 0;

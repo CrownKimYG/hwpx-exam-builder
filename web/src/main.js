@@ -1,3 +1,4 @@
+import { latestWorker } from './latest-worker.js';
 import { createWorkspaceStore, WorkspaceConflictError, WORKSPACE_DRAFT_KEY } from "./workspace-storage.js";
 import { localDateStamp } from "./date-format.js";
 import { loadArchive } from "./archive.js";
@@ -40,7 +41,6 @@ import {
   allocateExamSets,
   compileBankMatrixRules,
   compileBankQuotaRules,
-  estimateMaximumExamSets,
   parseSlotReferences,
 } from "./quick-generator.js";
 import {
@@ -155,6 +155,8 @@ let currentPage = 0;
 let pageCount = 0;
 let previewRequest = 0;
 let estimateTimer = null;
+let generationBusy = false;
+const estimateTask = latestWorker(() => new Worker(new URL('./quick-estimate.worker.js', import.meta.url), { type: 'module' }));
 let measureContext = null;
 let lastMeasuredFont = "";
 let activeBuild = null;
@@ -1700,41 +1702,51 @@ function collectUsedCodes() {
 }
 
 function scheduleQuickEstimate() {
+  estimateTask.cancel();
+  elements.quickGenerate.disabled = true;
+  elements.quickStatus.textContent = "가능 부수 계산 중…";
   window.clearTimeout(estimateTimer);
   estimateTimer = window.setTimeout(updateQuickEstimate, 120);
 }
 
 function updateQuickEstimate() {
-  if (!state.questions.length) return;
+  window.clearTimeout(estimateTimer);
+  estimateTask.cancel();
+  elements.quickGenerate.disabled = true;
+  if (!state.questions.length) { elements.quickStatus.textContent = '문제은행을 연결하세요.'; return; }
+  const showError = message => { elements.quickStatus.className = 'quick-status error'; elements.quickStatus.textContent = message; elements.quickGenerate.disabled = true; };
   try {
     const rules = quickRules();
-    const disconnected = state.bankProfiles.filter((p) => (Number(state.quick.bankCounts[p.bankId]) > 0) && state.files.some((r) => r.bankId === p.bankId && !r.bytes));
-    if (disconnected.length) throw new Error(`${disconnected.map((p) => p.displayName).join(", ")}: 원본 파일을 다시 연결해 주세요.`);
-    const usedCodes = collectUsedCodes();
-    if (rules.kind === "mixed") {
-      const requested = Number(elements.quickExamCount.value);
-      allocateExamSets({questions:quickQuestions(),rules,usedCodes,examCount:requested,seed:elements.quickSeed.value || "estimate"});
-      elements.quickStatus.className = "quick-status";
-      elements.quickStatus.textContent = `${rules.size}문항 × ${requested}부 구성 가능`;
-      elements.quickGenerate.disabled = false;
-      return;
-    }
-    const maximum = estimateMaximumExamSets({ questions: quickQuestions(), rules, usedCodes, seed: elements.quickSeed.value || "estimate" });
-    const requested = Number(elements.quickExamCount.value) || 0;
-    elements.quickStatus.className = "quick-status";
-    elements.quickStatus.textContent = `현재 ${quickQuestions().filter((q) => !usedCodes.has(q.code)).length}문항 사용 가능 · 중복 없는 시험지 최대 ${maximum}부`;
-    elements.quickGenerate.disabled = maximum < 1 || requested < 1 || requested > maximum;
-  } catch (error) {
-    elements.quickStatus.className = /조건이 없는/.test(error.message) ? "quick-status" : "quick-status error";
-    elements.quickStatus.textContent = error.message;
-    elements.quickGenerate.disabled = true;
-  }
+    const disconnected = state.bankProfiles.filter(p => Number(state.quick.bankCounts[p.bankId]) > 0 && state.files.some(r => r.bankId === p.bankId && !r.bytes));
+    if (disconnected.length) throw new Error(`${disconnected.map(p => p.displayName).join(', ')}: 원본 파일을 다시 연결해 주세요.`);
+    const usedCodes = collectUsedCodes(), questions = quickQuestions();
+    const requested = Number(elements.quickExamCount.value);
+    if (!Number.isInteger(requested) || requested < 1) throw new Error('시험지 수를 1 이상의 정수로 입력하세요.');
+    elements.quickStatus.className = 'quick-status';
+    elements.quickStatus.textContent = '가능 부수 계산 중…';
+    const available = questions.filter(q => !usedCodes.has(q.code)).length;
+    // Only send fields used by matching, not source XML or document bytes.
+    const candidates = questions.map(({ code, bankId, unitKey, difficulty }) => ({ code, bankId, unitKey, difficulty }));
+    estimateTask.run({ questions: candidates, rules, usedCodes, examCount: requested, seed: elements.quickSeed.value || 'estimate' }, result => {
+      if (result.error) { showError(result.error); return; }
+      elements.quickStatus.className = 'quick-status';
+      if (result.maximum !== undefined) {
+        elements.quickStatus.textContent = `현재 ${available}문항 사용 가능 · 중복 없는 시험지 최대 ${result.maximum}부`;
+        elements.quickGenerate.disabled = generationBusy || requested > result.maximum || result.maximum < 1;
+      } else {
+        elements.quickStatus.textContent = `${rules.size}문항 × ${requested}부 구성 가능`;
+        elements.quickGenerate.disabled = generationBusy;
+      }
+    });
+  } catch (error) { showError(error.message); }
 }
 
 function quickGenerate() {
+  if (generationBusy || activeBuild) return;
+  generationBusy = true; elements.quickGenerate.disabled = true;
   void withHistoryLock(generateWithHistory).catch((error) => {
     elements.quickStatus.className = "quick-status error"; elements.quickStatus.textContent = error.message;
-  });
+  }).finally(() => { generationBusy = false; scheduleQuickEstimate(); });
 }
 
 function generateWithHistory() {
@@ -1762,7 +1774,8 @@ function generateWithHistory() {
       });
       renderExamDrafts();
     } else {
-      exams.forEach((codes, i) => addExam(codes, { baseName: elements.quickExamName.value, historyId: historyIds[i] }));
+      exams.forEach((codes, i) => addExam(codes, { baseName: elements.quickExamName.value, historyId: historyIds[i], render: false }));
+      renderExamDrafts();
     }
     state.quick.seed = seed;
     elements.quickStatus.className = "quick-status";
@@ -1777,7 +1790,7 @@ function generateWithHistory() {
   }
 }
 
-function addExam(codes = [], { title = "", baseName = "시험지", historyId = crypto.randomUUID() } = {}) {
+function addExam(codes = [], { title = "", baseName = "시험지", historyId = crypto.randomUUID(), render = true } = {}) {
   if (state.handoffExams.length) return;
   state.undoExams = null;
   const sequence = state.nextExamId++;
@@ -1787,10 +1800,11 @@ function addExam(codes = [], { title = "", baseName = "시험지", historyId = c
     title: title || numberedExamTitle(baseName, sequence),
     codesText: Array.isArray(codes) ? codes.join(" ") : String(codes || ""),
   });
-  renderExamDrafts();
+  if (render) renderExamDrafts();
 }
 
 function renderExamDrafts() {
+  const questionByCode = new Map(state.questions.map(q => [q.code, q]));
   elements.examCountBadge.textContent = String(state.exams.length);
   elements.undoExams.classList.toggle("hidden", !state.undoExams);
   elements.clearExams.disabled = !state.exams.length || state.handoffExams.length > 0;
@@ -1837,7 +1851,7 @@ function renderExamDrafts() {
     const orderList=createElement("ol");
     const refreshOrder=()=>{
       try { orderList.replaceChildren(...examCodes(exam).map(code=>{
-        const q=state.questions.find(q=>q.code===code);
+        const q=questionByCode.get(code);
         return createElement("li",{text:q?`${state.bankProfiles.find(p=>p.bankId===q.bankId)?.displayName || "은행"} · ${q.unitName} · ${{lv1:"하 / lv1",lv2:"중 / lv2",lv3:"상 / lv3"}[q.difficulty] || q.difficulty} · ${code}`:code});
       })); } catch { orderList.replaceChildren(); }
     };
@@ -1850,7 +1864,8 @@ function renderExamDrafts() {
 }
 
 function validateExamDrafts(selectedExams = state.exams) {
-  const known = new Set(state.questions.map((question) => question.code));
+  const questionByCode = new Map(state.questions.map(question => [question.code, question]));
+  const known = new Set(questionByCode.keys());
   const globallyUsed = new Map();
   let valid = Boolean(selectedExams.length && state.questions.length);
   selectedExams.forEach((exam, examIndex) => {
@@ -1872,7 +1887,7 @@ function validateExamDrafts(selectedExams = state.exams) {
         const duplicates = codes.filter((code) => previous.has(code));
         if (duplicates.length) throw new Error(`이전 출제와 중복: ${duplicates.join(", ")}`);
       }
-      const selected = codes.map((code) => state.questions.find((q) => q.code === code));
+      const selected = codes.map(code => questionByCode.get(code));
       if (exam.handoffMetadata && selected.some((q) => bankSubjectForRule(q.ruleId) !== missingSubjectFor(exam.handoffMetadata))) throw new Error("인계 파일에 추가할 과목의 문항만 선택하세요.");
       const bankCounts = new Map();
       selected.forEach((q) => bankCounts.set(q.bankId, (bankCounts.get(q.bankId) || 0) + 1));
