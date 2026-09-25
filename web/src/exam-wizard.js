@@ -140,8 +140,9 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
     const rows = subject.positionMode === 'group'
       ? subject.groups.map((g, i) => ({ label: `묶음 ${i + 1} · ${g.units.map(unitName).join(' · ')}`, cells: g.positions ||= {} }))
       : [...new Set(subject.groups.flatMap(g => g.units))].map(unit => ({ label: unitName(unit), cells: (subject.unitPositions ||= {})[unit] ||= {} }));
+    rows.unshift({ label: subject.positionMode === 'group' ? '묶음 전체' : '단원 전체', cells: (subject.allPositions ||= {})[subject.positionMode] ||= {} });
     const table = make('table', '', 'rule-matrix'), head = make('thead'), header = make('tr');
-    const difficulties = [['lv1', '하'], ['lv2', '중'], ['lv3', '상'], ['any', '랜덤']];
+    const difficulties = [['lv1', '하'], ['lv2', '중'], ['lv3', '상'], ['any', '난이도 전체']];
     header.append(make('th', subject.positionMode === 'group' ? '묶음' : '단원'));
     difficulties.forEach(([, label]) => header.append(make('th', label))); head.append(header); table.append(head);
     const tbody = make('tbody');

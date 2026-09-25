@@ -54,6 +54,7 @@ export function compileGroupedRules(config, size) {
     if (s.weight === 0 || !['unit', 'group'].includes(s.positionMode)) continue;
     const rows = s.positionMode === 'group' ? s.groups.map(g => ({ units: g.units, cells: g.positions || {} }))
       : Object.entries(s.unitPositions || {}).map(([unit, cells]) => ({ units: [unit], cells }));
+    rows.push({ units: [...new Set(s.groups.flatMap(g => g.units))], cells: s.allPositions?.[s.positionMode] || {} });
     for (const row of rows) for (const [difficulty, value] of Object.entries(row.cells)) {
       for (const slot of parseSlotReferences(value, size)) positions[slot - 1].push({ subject: s.name, units: row.units, difficulty: difficulty === 'any' ? '' : difficulty });
     }

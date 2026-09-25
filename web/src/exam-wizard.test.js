@@ -90,3 +90,20 @@ test('단원별과 묶음별 번호표 입력을 별도로 보존한다',()=>{
   choose('unit');assert.equal(doc.querySelector('[aria-label="수학Ⅰ 단원1 하 출제 번호"]').value,'1');
  }finally{globalThis.Option=original;}
 });
+
+test('전체 행과 전체 열 입력 및 모드별 보존',()=>{
+ const dom=new JSDOM(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'));
+ const doc=dom.window.document, original=globalThis.Option;globalThis.Option=dom.window.Option;
+ try {
+  const questions=[{subject:'수학Ⅰ',bankId:'a',unitKey:'u1',unitName:'단원1'}];
+  const state={questions,exams:[],quick:{questionCount:1,examCount:1},bankProfiles:[{bankId:'a',displayName:'교재'}]};
+  const wizard=mountExamWizard({document:doc,getState:()=>state,questions:()=>questions,estimate:()=>{},rules:()=>{},save:()=>{}});
+  const choose=value=>{const select=doc.querySelector('[aria-label="수학Ⅰ 번호 설정"]');select.value=value;select.dispatchEvent(new dom.window.Event('change'));};
+  for(const [mode,label] of [['unit','단원 전체'],['group','묶음 전체']]) {
+   choose(mode);const input=doc.querySelector(`[aria-label="수학Ⅰ ${label} 난이도 전체 출제 번호"]`);
+   input.value='All';input.dispatchEvent(new dom.window.Event('input'));
+   assert.equal(wizard.config().subjects[0].allPositions[mode].any,'All');
+  }
+  choose('unit');assert.equal(doc.querySelector('[aria-label="수학Ⅰ 단원 전체 난이도 전체 출제 번호"]').value,'All');
+ }finally{globalThis.Option=original;}
+});

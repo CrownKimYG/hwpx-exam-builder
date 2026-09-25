@@ -81,3 +81,24 @@ test('묶음별 번호와 난이도 합계를 동시에 만족하고 출력 순�
  assert.throws(()=>allocateExamSets({questions,rules:{...rules,difficultyCounts:{lv1:0,lv2:3,lv3:0}},examCount:1,nodeLimit:1000}));
  s.groups[0].positions.lv1='4';assert.throws(()=>compileGroupedRules(config,3),/범위/);
 });
+
+test('단원/묶음 전체 행과 난이도 전체 열의 번호 조건을 적용한다',()=>{
+ for(const positionMode of ['unit','group']) {
+  const config=initialGroupedConfig(questions);config.subjects[1].weight=0;
+  const s=config.subjects[0];s.positionMode=positionMode;
+  s.allPositions={[positionMode]:{lv1:'1',any:'3'}};
+  if(positionMode==='unit') s.unitPositions={'수학1:0':{any:'2'}};
+  else s.groups[0].positions={any:'2'};
+  const exams=run(config,3,3);
+  for(const exam of exams){assert.equal(lookup.get(exam[0]).difficulty,'lv1');assert.equal(lookup.get(exam[1]).unitKey,'수학1:0');assert.equal(exam.length,3);}
+  s.allPositions[positionMode]={any:'All'};
+  assert.equal(run(config,3,1)[0].length,3);
+ }
+});
+
+test('전체 행도 현재 과목과 묶음 제외 조건을 지킨다',()=>{
+ const config=initialGroupedConfig(questions);const s=config.subjects[0];
+ s.positionMode='group';s.allPositions={group:{any:'1'}};s.groups[0].count=0;
+ for(const exam of run(config,4,3)){assert.equal(lookup.get(exam[0]).subject,'수학1');assert.ok(exam.every(code=>lookup.get(code).unitKey!=='수학1:0'));}
+ s.allPositions.group.any='5';assert.throws(()=>compileGroupedRules(config,4),/범위/);
+});
