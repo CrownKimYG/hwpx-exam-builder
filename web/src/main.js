@@ -1649,7 +1649,7 @@ function quickQuestions() {
 }
 
 function quickRules() {
-  if (elements.quickMode.value === "grouped") return compileGroupedRules(examWizard.config(), Number(elements.quickQuestionCount.value));
+  if (elements.quickMode.value === "grouped") return { ...compileGroupedRules(examWizard.config(), Number(elements.quickQuestionCount.value)), difficultyCounts: examWizard.difficulty() };
   const banks = state.bankProfiles.map((p) => ({ bankId: p.bankId, name: p.displayName, count: Number(state.quick.bankCounts[p.bankId] ?? 0) }));
   if (elements.quickMode.value === "mixed") return compileMixedRules(banks.map(b=>({...b,range:state.quick.mixed?.bankRanges?.[b.bankId]})),state.quick.mixed?.rows);
   if (elements.quickMode.value === "banks") return compileBankQuotaRules(banks);
@@ -1734,7 +1734,7 @@ function generateWithHistory() {
       });
       renderExamDrafts();
     } else {
-      exams.forEach((codes, i) => addExam(codes, { baseName: elements.quickExamName.value, historyId: historyIds[i] }));
+      exams.forEach((codes, i) => addExam(codes, { baseName: [examWizard?.activeTrack(), elements.quickExamName.value].filter(Boolean).join("_"), historyId: historyIds[i] }));
     }
     state.quick.seed = seed;
     elements.quickStatus.className = "quick-status";
@@ -1822,11 +1822,11 @@ function renderExamDrafts() {
   validateExamDrafts();
 }
 
-function validateExamDrafts() {
+function validateExamDrafts(selectedExams = state.exams) {
   const known = new Set(state.questions.map((question) => question.code));
   const globallyUsed = new Map();
-  let valid = Boolean(state.exams.length && state.questions.length);
-  state.exams.forEach((exam, examIndex) => {
+  let valid = Boolean(selectedExams.length && state.questions.length);
+  selectedExams.forEach((exam, examIndex) => {
     const output = elements.examList.querySelector(`[data-validation-for="${exam.id}"]`);
     const field = output?.parentElement.querySelector("textarea");
     field?.setAttribute("aria-invalid", "false");
@@ -1866,7 +1866,7 @@ function validateExamDrafts() {
       }
     }
   });
-  elements.downloadSummary.textContent = state.exams.length ? `${state.exams.length}부 구성됨${valid ? " · 다운로드 준비 완료" : " · 문항을 확인해 주세요"}` : "시험지를 구성해 주세요";
+  elements.downloadSummary.textContent = selectedExams.length ? `${selectedExams.length}부 구성됨${valid ? " · 다운로드 준비 완료" : " · 문항을 확인해 주세요"}` : "시험지를 구성해 주세요";
   elements.buildExams.disabled = !valid;
   elements.saveHandoff.disabled = !valid || state.handoffExams.length > 0;
   return valid;
@@ -2028,9 +2028,9 @@ function applyHandoffExams() {
   updateQuickEstimate();
 }
 
-function selectedBuildWarnings() {
+function selectedBuildWarnings(selectedExams = state.exams) {
   const questionByCode = new Map(state.questions.map((question) => [question.code, question]));
-  const exams = state.exams.map((exam) => ({
+  const exams = selectedExams.map((exam) => ({
     title: exam.title,
     codes: examCodes(exam),
   }));
@@ -2038,8 +2038,8 @@ function selectedBuildWarnings() {
   return collectSelectedBuildWarnings(koreanExams, questionByCode, EBSI_KOREAN_RULE_ID);
 }
 
-function confirmBuildWarnings() {
-  const warnings = selectedBuildWarnings();
+function confirmBuildWarnings(selectedExams = state.exams) {
+  const warnings = selectedBuildWarnings(selectedExams);
   if (!warnings.length) return Promise.resolve(true);
   elements.buildWarningList.replaceChildren();
   warnings.forEach((record) => {
@@ -2233,9 +2233,11 @@ async function saveHandoffExams() {
   }
 }
 
-async function buildAllExams() {
-  if (!validateExamDrafts()) return;
-  if (!await confirmBuildWarnings()) return;
+async function buildAllExams(options = {}) {
+  if (activeBuild) return;
+  const selectedExams = options.examIds ? state.exams.filter(e => options.examIds.includes(e.id)) : state.exams;
+  if (!validateExamDrafts(selectedExams)) { setBuildStatus("시험지 문항과 원본 연결을 확인하세요.", "error"); return; }
+  if (!await confirmBuildWarnings(selectedExams)) return;
   const build = { cancelled: false };
   activeBuild = build;
   elements.buildExams.disabled = true;
@@ -2249,10 +2251,10 @@ async function buildAllExams() {
     const transformMode = elements.questionFormat.value;
     const variants = outputType === "both" ? ["problem", "solution"] : [outputType];
     const questionByCode = new Map(state.questions.map((question) => [question.code, question]));
-    for (let examIndex = 0; examIndex < state.exams.length; examIndex += 1) {
-      const exam = state.exams[examIndex];
+    for (let examIndex = 0; examIndex < selectedExams.length; examIndex += 1) {
+      const exam = selectedExams[examIndex];
       const selectedQuestions = examCodes(exam).map((code) => questionByCode.get(code));
-      setBuildStatus(`${examIndex + 1}/${state.exams.length} · ${exam.title} 문제 영역 확인 중...`);
+      setBuildStatus(`${examIndex + 1}/${selectedExams.length} · ${exam.title} 문제 영역 확인 중...`);
       let problemBytes = await assembleExamVariant({ exam, selectedQuestions, variant: "problem", transformMode, build });
       const problemOutputPages = await pageCountFor(problemBytes);
       const problemContentPages = await pageCountFor(await removeEndnotesHwpx(problemBytes));
@@ -2261,7 +2263,7 @@ async function buildAllExams() {
       const solutionNeedsBlankPage = !explicitSolutionSlot && problemContentPages % 2 === 1;
       if (problemOutputNeedsBlankPage) problemBytes = await appendCompletelyBlankPageHwpx(problemBytes);
       for (const variant of variants) {
-        setBuildStatus(`${examIndex + 1}/${state.exams.length} · ${exam.title} ${variant === "problem" ? "문제지" : "해설 포함"} 생성 중...`);
+        setBuildStatus(`${examIndex + 1}/${selectedExams.length} · ${exam.title} ${variant === "problem" ? "문제지" : "해설 포함"} 생성 중...`);
         let bytes = variant === "problem"
           ? problemBytes
           : await assembleExamVariant({ exam, selectedQuestions, variant, transformMode, build });
@@ -2286,8 +2288,8 @@ async function buildAllExams() {
     ensureBuildActive(build);
     await withHistoryLock(() => {
       ensureBuildActive(build);
-      state.exams.forEach((exam) => { exam.historyId ||= crypto.randomUUID(); });
-      reserveExamHistory(localStorage, state.exams.map((exam) => ({ historyId: exam.historyId, title: exam.title, codes: examCodes(exam) })), state.questions, document.querySelector("#exclude-history").checked);
+      selectedExams.forEach((exam) => { exam.historyId ||= crypto.randomUUID(); });
+      reserveExamHistory(localStorage, selectedExams.map((exam) => ({ historyId: exam.historyId, title: exam.title, codes: examCodes(exam) })), state.questions, document.querySelector("#exclude-history").checked);
     });
     renderHistorySummary(); saveWorkspaceDraft();
     if (outputs.length === 1) {
@@ -2297,9 +2299,9 @@ async function buildAllExams() {
       outputs.forEach((output) => zip.file(output.filename, output.bytes));
       const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
       ensureBuildActive(build);
-      downloadBlob(blob, `시험지_${state.exams.length}개_${localDateStamp()}.zip`);
+      downloadBlob(blob, `시험지_${selectedExams.length}개_${localDateStamp()}.zip`);
     }
-    setBuildStatus(`${state.exams.length}부 · 결과 파일 ${outputs.length}개 검증 및 다운로드 완료`);
+    setBuildStatus(`${selectedExams.length}부 · 결과 파일 ${outputs.length}개 검증 및 다운로드 완료`);
   } catch (error) {
     if (error instanceof BuildCancelledError) setBuildStatus(error.message);
     else setBuildStatus(`생성 실패: ${error.message}`, "error");
@@ -2480,7 +2482,7 @@ bindEvents();
 bindExamPresets();
 bindExamHistory();
 examWizard = mountExamWizard({ document, getState: () => state, questions: quickQuestions,
-  estimate: scheduleQuickEstimate, rules: quickRules, save: saveWorkspaceDraft });
+  estimate: scheduleQuickEstimate, rules: quickRules, save: saveWorkspaceDraft, download: buildAllExams });
 document.querySelector("#resume-workspace").addEventListener("click", resumeWorkspace);
 for (const eventName of ["input", "change", "click"]) document.addEventListener(eventName, () => { window.setTimeout(saveWorkspaceDraft, 0); });
 // Edits are saved as they happen. An old tab must never save on close.

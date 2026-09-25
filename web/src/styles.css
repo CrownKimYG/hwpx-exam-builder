@@ -619,3 +619,10 @@ body[data-workspace-screen="draw"] .builder-panel > .exam-list-card { display:no
 .wizard-results p { text-align:right; color:var(--text-muted); font-size:12px; }
 .wizard-results select, .wizard-group select { padding:8px; border:1px solid var(--line); border-radius:6px; background:white; font:inherit; }
 @media(pointer:coarse) { .wizard-steps button, .wizard-unit-picker button, .wizard-subject-tabs button, .wizard-controls button { min-height:44px; } }
+
+.wizard-difficulty { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-width: 480px; }
+.wizard-track h2, .wizard-download h2 { margin: 0 0 24px; font-size: 22px; }
+.wizard-track ul { padding-left: 20px; line-height: 2; }
+.wizard-download .output-options { display: block; margin-top: 24px; }
+.wizard-download .output-options-body { position: static; width: auto; max-width: 100%; max-height: none; box-shadow: none; }
+.wizard-field input, .wizard-field select { max-width: 100%; min-width: 0; }

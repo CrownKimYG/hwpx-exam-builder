@@ -21,6 +21,7 @@ export function createExamPreset({ id, name, profiles, quick, mode }) {
   const preset = { version: 1, id, name: name.trim(), banks, mode,
     grouped: structuredClone(quick.grouped || null), questionCount: Number(quick.questionCount),
     mixed: structuredClone(quick.mixed || null),
+    workflow: quick.workflow, series: Object.fromEntries(Object.entries(quick.series || {}).map(([key, profile]) => [key, { counts: structuredClone(profile.counts) }])),
     examName: quick.examName, examCount: Number(quick.examCount), updatedAt: new Date().toISOString() };
   if (!Number.isInteger(preset.examCount) || preset.examCount < 1) throw new Error("시험지 수는 1 이상의 정수로 입력해 주세요.");
   presetRules(preset);
@@ -56,7 +57,7 @@ export function applyExamPreset(preset, profiles, unitsByBank, currentQuick) {
     bankCounts[bank.bankId] = bank.count;
     for (const cell of bank.cells) cells[JSON.stringify([bank.bankId, cell.unitKey || null, cell.difficulty || null])] = cell.value;
   }
-  return { ...currentQuick, wizardStep: 0, wizardResultIds: null, grouped: structuredClone(preset.grouped || null), mixed: structuredClone(preset.mixed || null), bankCounts, cells, examName: preset.examName, examCount: preset.examCount,
+  return { ...currentQuick, wizardStep: 0, wizardResultIds: null, workflow: preset.workflow || "single", series: structuredClone(preset.series || {}), grouped: structuredClone(preset.grouped || null), mixed: structuredClone(preset.mixed || null), bankCounts, cells, examName: preset.examName, examCount: preset.examCount,
     questionCount: preset.mode === 'grouped' ? preset.questionCount : preset.banks.reduce((sum, bank) => sum + bank.count, 0) };
 }
 

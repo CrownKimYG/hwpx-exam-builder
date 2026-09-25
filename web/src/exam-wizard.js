@@ -1,6 +1,7 @@
+import { TRACKS, difficultyCounts, seriesSignature, seriesExams } from './exam-series.js';
 import { compileGroupedRules, groupCatalog, initialGroupedConfig, subjectName } from './grouped-generator.js';
 
-export function mountExamWizard({ document: doc, getState, questions, estimate, rules, save }) {
+export function mountExamWizard({ document: doc, getState, questions, estimate, rules, save, download }) {
   const $ = selector => doc.querySelector(selector);
   const make = (tag, text, className) => { const el = doc.createElement(tag); if (text) el.textContent = text; if (className) el.className = className; return el; };
   const button = (text, action) => { const el = make('button', text); el.type = 'button'; el.addEventListener('click', action); return el; };
@@ -16,7 +17,7 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
   }
   workspace.prepend(nav);
   const steps = make('nav', '', 'wizard-steps'); steps.setAttribute('aria-label', '출제 단계');
-  const panels = Array.from({ length: 5 }, (_, i) => { const p = make('section', '', 'wizard-panel'); p.id = `wizard-panel-${i}`; return p; });
+  const panels = Array.from({ length: 6 }, (_, i) => { const p = make('section', '', 'wizard-panel'); p.id = `wizard-panel-${i}`; return p; });
   const controls = make('div', '', 'wizard-controls');
   const previous = button('이전', () => go(step - 1));
   const progress = make('span');
@@ -33,7 +34,18 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
   panels[0].append($('.preset-picker'), $('#exam-preset-status'), settings, mode.closest('.bank-selection'));
   panels[1].append(ratio, $('#bank-quotas'));
   panels[2].append(groups, automatic, $('#mixed-config'), $('#matrix-tabs'), $('#matrix-wrap'));
-  panels[3].append(review, $('.history-options'), $('.quick-actions'));
+  const actions = $('.quick-actions'), history = $('.history-options');
+  panels[3].append(review, history, actions);
+  const trackViews = [make('div', '', 'wizard-track'), make('div', '', 'wizard-track')];
+  const downloadView = make('div', '', 'wizard-download'); panels[5].append(downloadView);
+  const outputOptions = $('.output-options'), outputHome = outputOptions?.parentElement;
+  const workflow = make('select'); workflow.setAttribute('aria-label', '출제 순서');
+  workflow.add(new Option('인문계 → 자연계', 'pair')); workflow.add(new Option('일반 출제', 'single'));
+  const workflowField = make('label', '', 'wizard-field'); workflowField.append(make('span', '출제 순서'), workflow); panels[0].prepend(workflowField);
+  workflow.addEventListener('change', () => { getState().quick.workflow = workflow.value; go(0); });
+  const paired = () => mode.value === 'grouped' && getState().quick.workflow !== 'single' && !getState().handoffExams?.length;
+  const activeTrack = () => paired() && (step === 3 || step === 4) ? TRACKS[step - 3] : null;
+  const ready = track => seriesExams(getState(), track).length > 0;
   const results = make('div', '', 'wizard-results'); panels[4].append(results);
   builder.append(exams);
   body.replaceChildren(steps, ...panels, error, controls);
@@ -142,7 +154,7 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
     settings.open = true;
     if (quickRef !== getState().quick) {
       quickRef = getState().quick;
-      step = Math.max(0, Math.min(4, Number(quickRef.wizardStep) || 0)); reached = step;
+      step = Math.max(0, Math.min(5, Number(quickRef.wizardStep) || 0)); reached = step;
       selections.clear();
     }
     const grouped = mode.value === 'grouped';
@@ -156,7 +168,72 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
       $('#matrix-tabs').classList.add('hidden'); $('#matrix-wrap').classList.add('hidden');
       renderRatios(); renderGroups();
     }
-    renderReview(); renderResults(); renderSteps();
+    if (!paired() && step > 4) step = 0;
+    $("#quick-question-count-label").textContent = paired() ? "계열별 문항 수" : "시험지당 문항 수";
+    const copiesLabel = $("#quick-exam-count").parentElement.firstChild;
+    if (copiesLabel.nodeType === 3) copiesLabel.textContent = paired() ? "계열별 시험지 수" : "시험지 수";
+    workflow.value = paired() ? "pair" : "single"; workflowField.hidden = !grouped;
+    renderReview(); renderResults(); renderSeries(); renderSteps();
+  }
+  function renderSeries() {
+    const pair = paired(), state = getState();
+    review.hidden = pair; results.hidden = pair;
+    trackViews.forEach((view, i) => {
+      view.hidden = !pair; panels[3 + i].prepend(view);
+      if (!pair) return;
+      const track = TRACKS[i]; state.quick.series ||= {};
+      const profile = state.quick.series[track] ||= { counts: { lv1: '', lv2: '', lv3: '' } };
+      view.replaceChildren(make('h2', track));
+      const fields = make('div', '', 'wizard-difficulty');
+      const total = make('p');
+      const update = () => { total.textContent = `${Object.values(profile.counts).reduce((n, v) => n + (Number(v) || 0), 0)} / ${state.quick.questionCount}문항`; };
+      for (const [key, label] of [['lv1', '하'], ['lv2', '중'], ['lv3', '상']]) {
+        const field = make('label', '', 'wizard-field'), input = make('input');
+        input.type = 'number'; input.min = 0; input.max = state.quick.questionCount; input.step = 1; input.value = profile.counts[key];
+        input.setAttribute('aria-label', `${track} ${label} 문항 수`);
+        input.addEventListener('input', () => { profile.counts[key] = input.value; update(); renderSteps(); estimate(); save(); });
+        field.append(make('span', label), input); fields.append(field);
+      }
+      update(); view.append(fields, total);
+      const available = seriesExams(state, track);
+      if (available.length) {
+        const list = make('div');
+        const byCode = new Map(state.questions.map(q => [q.code, q]));
+        available.forEach(exam => {
+          const details = make('details'); details.append(make('summary', `${exam.title} · ${exam.codesText.trim().split(/\s+/).length}문항`));
+          const units = make('ol');
+          for (const code of exam.codesText.trim().split(/\s+/)) {
+            const q = byCode.get(code);
+            units.append(make('li', q ? `${subjectName(q.subject)} · ${q.unitName || q.unitKey} · ${{lv1:'하',lv2:'중',lv3:'상'}[q.difficulty] || q.difficulty}` : code));
+          }
+          details.append(units); list.append(details);
+        });
+        view.append(list);
+      }
+    });
+    const target = pair && step === 4 ? 4 : 3;
+    panels[target].append(history, actions);
+    downloadView.replaceChildren();
+    if (pair) {
+      downloadView.append(make('h2', '다운로드'));
+      for (const track of TRACKS) {
+        const available = seriesExams(state, track);
+        downloadView.append(make('p', `${track} · ${available.length}부`));
+      }
+      const status = make('p'); status.setAttribute('role', 'status');
+      const start = button('두 계열 HWPX 다운로드', async () => {
+        if (!TRACKS.every(ready)) { status.textContent = '인문계와 자연계를 다시 출제하세요.'; return; }
+        start.disabled = true;
+        const original = $('#build-status');
+        const observer = original && new doc.defaultView.MutationObserver(() => { status.textContent = original.textContent; });
+        observer?.observe(original, { childList: true, subtree: true, characterData: true });
+        try { await download({ examIds: TRACKS.flatMap(t => seriesExams(getState(), t).map(e => e.id)) }); }
+        finally { observer?.disconnect(); start.disabled = false; if (original) status.textContent = original.textContent; }
+      });
+      start.classList.add('primary'); start.disabled = !TRACKS.every(ready);
+      downloadView.append(start, status);
+    }
+    if (outputOptions) (pair && screen === 'draw' && step === 5 ? downloadView : outputHome).append(outputOptions);
   }
   function renderResults() {
     const state = getState(), ids = state.quick.wizardResultIds;
@@ -179,17 +256,20 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
     results.append(chooser, list, make('p', `${selected.length}문항 · ${available.length}부`));
   }
   function renderSteps() {
-    steps.replaceChildren(...['시험지', '과목 비율', '단원 묶음', '확인', '결과'].map((name, i) => {
+    const labels = paired() ? ['시험지', '과목 비율', '단원 묶음', '인문계', '자연계', '다운로드'] : ['시험지', '과목 비율', '단원 묶음', '확인', '결과'];
+    steps.replaceChildren(...labels.map((name, i) => {
       if (mode.value !== 'grouped' && i === 1) name = '교재 배분';
       if (mode.value !== 'grouped' && i === 2) name = '출제 조건';
-      const b = button(`${i < step ? '✓' : i + 1} ${name}`, () => go(i)); b.disabled = i > reached; b.setAttribute('aria-controls', panels[i].id); if (step === i) b.setAttribute('aria-current', 'step'); return b;
+      const b = button(`${i < step ? '✓' : i + 1} ${name}`, () => go(i)); b.disabled = i > reached || (paired() && ((i >= 4 && !ready('인문계')) || (i >= 5 && !ready('자연계')))); b.setAttribute('aria-controls', panels[i].id); if (step === i) b.setAttribute('aria-current', 'step'); return b;
     }));
     panels.forEach((panel, i) => { panel.hidden = i !== step; });
-    previous.disabled = step === 0; progress.textContent = `${step + 1} / 5`;
-    next.hidden = step === 3; next.textContent = step === 4 ? '시험지 열기 →' : '다음 →';
-    $('#quick-generate').textContent = `${$('#quick-exam-count').value}부 추첨`;
+    previous.disabled = step === 0; progress.textContent = `${step + 1} / ${labels.length}`;
+    next.hidden = paired() ? step === 5 : step === 3;
+    next.disabled = paired() && step >= 3 && !ready(activeTrack());
+    next.textContent = paired() ? (step === 3 ? '자연계 →' : step === 4 ? '다운로드 →' : '다음 →') : step === 4 ? '시험지 열기 →' : '다음 →';
+    $('#quick-generate').textContent = `${activeTrack() || ''} ${$('#quick-exam-count').value}부 ${ready(activeTrack()) ? '다시 출제' : '출제'}`.trim();
   }
-  function go(nextStep) { step = Math.max(0, Math.min(4, nextStep)); reached = Math.max(reached, step); getState().quick.wizardStep = step; error.textContent = ''; refresh(); if (step === 3) estimate(); steps.querySelector('[aria-current]')?.focus(); save(); }
+  function go(nextStep) { step = Math.max(0, Math.min(paired() ? 5 : 4, nextStep)); reached = Math.max(reached, step); getState().quick.wizardStep = step; error.textContent = ''; refresh(); if (step === 3 || (paired() && step === 4)) estimate(); steps.querySelector('[aria-current]')?.focus(); save(); }
   function advance() {
     error.textContent = '';
     try {
@@ -197,7 +277,8 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
         for (const id of ['#quick-question-count', '#quick-exam-count']) { const input = $(id); if (!input.readOnly && !input.checkValidity()) { input.reportValidity(); return; } }
       }
       if (mode.value === 'grouped' && step > 0) compileGroupedRules(config(), Number($('#quick-question-count').value));
-      if (step === 4) { showScreen('papers'); return; }
+      if (!paired() && step === 4) { showScreen('papers'); return; }
+      if (paired() && step >= 3 && !ready(activeTrack())) return;
       if (step === 2) rules();
       go(step + 1); save();
     } catch (e) { error.textContent = e.message; }
@@ -207,9 +288,18 @@ export function mountExamWizard({ document: doc, getState, questions, estimate, 
     nav.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.screen === value)));
     if (value === 'banks') $('#bank-manager').open = true;
     if (value === 'draw') refresh();
+    else if (outputOptions) outputHome.append(outputOptions);
   }
   mode.addEventListener('change', () => { go(0); changed(); });
   $('#quick-body').addEventListener('input', event => { if (!event.target.closest('.exam-list-card')) { reached = Math.min(reached, 3); renderSteps(); } });
   showScreen('draw'); refresh();
-  return { refresh, config, conditions() { showScreen('draw'); go(2); }, generated(count) { getState().quick.wizardResultIds = getState().exams.slice(-count).map(e => e.id); resultIndex = 0; showScreen('draw'); go(4); }, showScreen };
+  return { refresh, config, activeTrack, difficulty() { const t = activeTrack(); return t ? difficultyCounts(getState().quick.series?.[t]?.counts, Number($('#quick-question-count').value)) : null; }, conditions() { showScreen('draw'); go(2); }, generated(count) {
+      const track = activeTrack();
+      if (track) {
+        const state = getState();
+        state.quick.series[track].result = { signature: seriesSignature(state.quick, track), exams: state.exams.slice(-count).map(e => ({ id: e.id, codesText: e.codesText })) };
+        if (track === '인문계' && state.quick.series['자연계']) delete state.quick.series['자연계'].result;
+        reached = Math.max(reached, step + 1); refresh(); save(); return;
+      }
+      getState().quick.wizardResultIds = getState().exams.slice(-count).map(e => e.id); resultIndex = 0; showScreen('draw'); go(4); }, showScreen };
 }

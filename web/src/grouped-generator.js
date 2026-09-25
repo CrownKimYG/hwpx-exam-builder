@@ -1,3 +1,4 @@
+import { difficultyCounts } from './exam-series.js';
 import { seededRandom } from './quick-generator.js';
 
 export function subjectName(value) {
@@ -67,6 +68,8 @@ export function apportion(total, weights, used, previousTotal, random) {
 export function allocateGroupedExamSets({ questions, rules, examCount, usedCodes = new Set(), seed = 'groups', nodeLimit = 150000 }) {
   if (!Number.isInteger(examCount) || examCount < 1) throw new Error('시험지 수를 1 이상 입력하세요.');
   if (examCount * rules.size > 1000) throw new Error('한 번에 총 1,000문항까지 출제할 수 있습니다.');
+  const difficulty = rules.difficultyCounts ? difficultyCounts(rules.difficultyCounts, rules.size) : null;
+  const difficultyLeft = Array.from({ length: examCount }, () => difficulty && { ...difficulty });
   const random = seededRandom(seed);
   const shuffle = list => list.map(value => ({ value, tie: random() })).sort((a, b) => a.tie - b.tie).map(x => x.value);
   const poolMap = new Map();
@@ -134,7 +137,7 @@ export function allocateGroupedExamSets({ questions, rules, examCount, usedCodes
     for (let i = 0; i < demands.length; i++) {
       if (selected[i]) continue;
       const d = demands[i];
-      const available = d.options.filter(o => remaining[o.pi] > 0 && !unitsUsed[d.e].has(unitKey(d, o)) && (!bankLeft[d.e][d.si] || bankLeft[d.e][d.si][pool[o.pi].bankId] > 0));
+      const available = d.options.filter(o => remaining[o.pi] > 0 && (!difficultyLeft[d.e] || difficultyLeft[d.e][pool[o.pi].difficulty] > 0) && !unitsUsed[d.e].has(unitKey(d, o)) && (!bankLeft[d.e][d.si] || bankLeft[d.e][d.si][pool[o.pi].bankId] > 0));
       if (!available.length) return false;
       if (best < 0 || available.length < choices.length) { best = i; choices = available; }
     }
@@ -151,8 +154,10 @@ export function allocateGroupedExamSets({ questions, rules, examCount, usedCodes
       selected[best] = o; remaining[o.pi]--; unitsUsed[d.e].add(u);
       change(localGroup[d.e], g, 1); change(totalGroup, g, 1); change(totalUnit, u, 1);
       if (bank) bank[b]--;
+      if (difficultyLeft[d.e]) difficultyLeft[d.e][pool[o.pi].difficulty]--;
       if (search(depth + 1)) return true;
       if (bank) bank[b]++;
+      if (difficultyLeft[d.e]) difficultyLeft[d.e][pool[o.pi].difficulty]++;
       selected[best] = null; remaining[o.pi]++; unitsUsed[d.e].delete(u);
       change(localGroup[d.e], g, -1); change(totalGroup, g, -1); change(totalUnit, u, -1);
     }
@@ -160,7 +165,7 @@ export function allocateGroupedExamSets({ questions, rules, examCount, usedCodes
   }
   const empty = demands.find(d => !d.options.length);
   if (empty) throw new Error(`시험지 ${empty.e + 1} · ${rules.subjects[empty.si].name}: 묶음 조건에 맞는 미사용 문항이 없습니다.`);
-  if (!search(0)) throw new Error('과목·교재 비율과 묶음 조건을 만족하는 미사용 단원이 부족합니다. 비율이나 묶음을 조정하세요.');
+  if (!search(0)) throw new Error('과목·교재 비율, 난이도와 묶음 조건을 만족하는 미사용 단원이 부족합니다. 비율이나 묶음을 조정하세요.');
   const result = Array.from({ length: examCount }, () => []);
   selected.forEach((o, i) => result[demands[i].e].push(pool[o.pi].codes.pop()));
   return result.map(shuffle);
